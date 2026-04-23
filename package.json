@@ -1,0 +1,24 @@
+{
+  "name": "xabot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "type": "module",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.19.1",
+    "@larksuiteoapi/node-sdk": "^1.61.1",
+    "zod": "^4.3.6"
+  }
+}
