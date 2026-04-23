@@ -302,4 +302,72 @@ describe('Bridge', () => {
 
     expect(cloudFns.close).toHaveBeenCalled();
   });
+
+  // ── Error path resilience ─────────────────────────────────────────────────
+
+  it('acp.prompt() throwing causes bridge to exit (cloud loop aborts)', async () => {
+    const chatA = channelId('chat-a');
+    router.register(agentId('agent-a'), [chatA]);
+    const sidA = sessionId('sid-a');
+
+    acpFns.getOrCreateSession.mockResolvedValue(sidA);
+    acpFns.prompt.mockRejectedValue(new Error('prompt failed'));
+
+    cloudFns.messages = () => asyncIter<Message>([msg(chatA, 'msg-a')]);
+
+    // Bridge.run() should complete (the catch block aborts, but run() itself resolves)
+    await expect(bridge.run()).resolves.toBeUndefined();
+
+    // prompt was called once before the error
+    expect(acpFns.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('cloud.send() throwing in notification loop does not crash Bridge — loop continues', async () => {
+    const chatA = channelId('chat-a');
+    const chatB = channelId('chat-b');
+    router.register(agentId('agent-a'), [chatA]);
+    router.register(agentId('agent-b'), [chatB]);
+    const sidA = sessionId('sid-a');
+    const sidB = sessionId('sid-b');
+
+    const notifQueue = new ManualIter<AgentNotification>();
+    cloudFns.messages = () =>
+      asyncIter<Message>([msg(chatA, 'trigger')]);
+    acpFns.getOrCreateSession.mockImplementation(async (c: ChannelId) =>
+      (c === chatA ? sidA : sidB) as ReturnType<typeof sessionId>,
+    );
+    cloudFns.send
+      .mockResolvedValueOnce(messageId('mid-1'))
+      .mockRejectedValueOnce(new Error('send failed'));
+    acpFns.notifications = () => notifQueue.iter();
+
+    const runPromise = bridge.run();
+    await new Promise((r) => setTimeout(r, 5));
+    notifQueue.push(notif(sidA, 'reply-1'));
+    notifQueue.push(notif(sidA, 'reply-2'));
+    notifQueue.stop();
+    await runPromise;
+
+    // Both notifications were processed; send failure for reply-2 was logged but did not stop the loop
+    expect(cloudFns.send).toHaveBeenCalledTimes(2);
+  });
+
+  // ── Non-text message handling ─────────────────────────────────────────────
+
+  it('non-text cloud message is forwarded with a structured placeholder', async () => {
+    const chatA = channelId('chat-a');
+    router.register(agentId('agent-a'), [chatA]);
+    const sidA = sessionId('sid-a');
+
+    cloudFns.messages = () => asyncIter<Message>([
+      { id: messageId('img-1'), chatId: chatA, senderId: userId('u1'), content: { type: 'image', url: 'https://cdn.example.com/photo.png' }, direction: 'incoming' },
+    ]);
+    acpFns.getOrCreateSession.mockResolvedValue(sidA);
+
+    await bridge.run();
+
+    expect(acpFns.prompt).toHaveBeenCalledWith(sidA, [
+      { type: 'text', text: '[image: https://cdn.example.com/photo.png]' },
+    ]);
+  });
 });

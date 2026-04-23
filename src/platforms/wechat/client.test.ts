@@ -328,6 +328,24 @@ describe('WechatClient', () => {
       await client.close(); // must not throw
       await client.close();
     });
+
+    it('close() while messages() iterator is suspended causes iterator to return done:true', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: false });
+
+      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
+      mockFetch.mockImplementationOnce(hangingPoll); // first poll hangs
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+
+      const msgIter = client.messages()[Symbol.asyncIterator]();
+      const nextP = msgIter.next(); // iterator suspends waiting for message
+
+      await client.close();
+
+      const { done } = await nextP;
+      expect(done).toBe(true);
+    });
   });
 
   // --------------------------------------------------------------------------

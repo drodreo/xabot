@@ -227,7 +227,7 @@ export class AcpSession {
   }
 
   /** Close the ACP connection and abort all pending operations. */
-  close(): void {
+  async close(): Promise<void> {
     this.#abortCtrl.abort();
     this.chatToSession.clear();
   }

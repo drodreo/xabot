@@ -76,6 +76,7 @@ export class WechatClient implements PlatformClient {
         appId: this.config.appId,
         appSecret: this.config.appSecret,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
@@ -120,7 +121,7 @@ export class WechatClient implements PlatformClient {
         const res = await this.fetchWithAuth(
           `/api/messages?timeout=${this.pollTimeoutMs}`,
           {
-            signal: ctrl.signal,
+            signal: AbortSignal.timeout(this.pollTimeoutMs + 30_000),
             headers: { Accept: 'application/json' },
           },
         );
@@ -128,7 +129,14 @@ export class WechatClient implements PlatformClient {
         if (!res.ok) {
           // 401 特殊处理：刷新 token，不 throw，直接 continue 重试
           if (res.status === 401) {
-            this.accessToken = await this.fetchAccessToken();
+            try {
+              this.accessToken = await this.fetchAccessToken();
+            } catch (tokenErr) {
+              console.error('WechatClient: failed to refresh token:', tokenErr);
+              retryDelay = 1000;
+              continue;
+            }
+            retryDelay = 1000;
             continue;
           }
           // 其他 4xx：不可重试，退出循环
@@ -154,8 +162,9 @@ export class WechatClient implements PlatformClient {
             this.messageBuffer.push(msg);
           }
         }
-      } catch {
+      } catch (err) {
         if (ctrl.signal.aborted) break;
+        console.error('WechatClient poll error:', err);
 
         const delay = Math.min(retryDelay, MAX_RETRY_DELAY_MS);
         retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY_MS);
@@ -174,6 +183,7 @@ export class WechatClient implements PlatformClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
       });
 
     let res = await doSend();
@@ -246,7 +256,7 @@ export class WechatClient implements PlatformClient {
     this.abortCtrl.abort();
 
     // Resolve any pending iterator so it exits instead of hanging.
-    if (this.messageResolve) {
+    while (this.messageResolve) {
       const resolve = this.messageResolve;
       this.messageResolve = null;
       resolve({

@@ -57,10 +57,18 @@ export class Bridge {
           // Build reverse mapping so we can route replies back
           this.#sessionToChat.set(sessionId, msg.chatId);
 
-          const text = msg.content.type === 'text' ? msg.content.text : JSON.stringify(msg.content);
+          let text: string;
+          if (msg.content.type === 'text') {
+            text = msg.content.text;
+          } else if (msg.content.type === 'image') {
+            text = `[image: ${msg.content.url}]`;
+          } else {
+            text = `[file: ${(msg.content as { name: string }).name}]`;
+          }
           await this.#acp.prompt(sessionId, [{ type: 'text', text }]);
         }
-      } catch {
+      } catch (err) {
+        console.error('[Bridge]', err);
         // Abort the other loop so both exit together
         this.#abortCtrl.abort();
       }
@@ -68,6 +76,7 @@ export class Bridge {
 
     // Agent → Cloud loop
     const agentNotificationsLoop = (async () => {
+      let lastNotifSessionId: SessionId | undefined;
       try {
         for await (const notif of this.#acp.notifications()) {
           if (signal.aborted) break;
@@ -75,11 +84,21 @@ export class Bridge {
           const chatId = this.#sessionToChat.get(notif.sessionId);
           if (!chatId) continue; // no known chat for this session — discard
 
-          await this.#cloud.send(chatId, { type: 'text', text: notif.content });
+          lastNotifSessionId = notif.sessionId;
+          try {
+            await this.#cloud.send(chatId, { type: 'text', text: notif.content });
+          } catch {
+            // send error — continue processing other notifications
+          }
         }
-      } catch {
-        // Abort the other loop so both exit together
+      } catch (err) {
+        console.error('[Bridge] notifications loop error:', err);
         this.#abortCtrl.abort();
+      } finally {
+        // Clean up the last-seen session mapping when the notifications iterator ends
+        if (lastNotifSessionId != null) {
+          this.#sessionToChat.delete(lastNotifSessionId);
+        }
       }
     })();
 
@@ -96,6 +115,6 @@ export class Bridge {
     this.#closed = true;
     this.#abortCtrl.abort();
     this.#sessionToChat.clear();
-    await Promise.all([this.#cloud.close(), this.#acp.close() as unknown as Promise<void>]);
+    await Promise.all([this.#cloud.close(), this.#acp.close()]);
   }
 }

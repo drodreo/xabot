@@ -212,6 +212,21 @@ describe('AcpSession', () => {
     expect(() => session.close()).not.toThrow();
   });
 
+  it('close() while notifications() is suspended causes iterator to return done:true', async () => {
+    const session = await AcpSession.connect();
+    const notifIter = session.notifications()[Symbol.asyncIterator]();
+
+    // Start iteration — it will suspend at waitNext (no items queued)
+    const nextP = notifIter.next();
+
+    // Close the session while iterator is suspended
+    session.close();
+
+    // Iterator should immediately return done: true
+    const { done } = await nextP;
+    expect(done).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // multiple chatIds independent sessions
   // -------------------------------------------------------------------------
