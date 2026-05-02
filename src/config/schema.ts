@@ -16,11 +16,21 @@ export function parseAcpArgs(argv: string[]): AcpArgs {
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     switch (argv[i]) {
-      case '--platform': args.platform = next; i++; break;
-      case '--app-id': args.appId = next; i++; break;
-      case '--app-secret': args.appSecret = next; i++; break;
-      case '--agent-id': args.agentId = next; i++; break;
-      case '--chat-ids': args.chatIds = (next ?? '').split(','); i++; break;
+      case '--platform':
+        if (!next || next.startsWith('--')) throw new Error('--platform requires a value');
+        args.platform = next; i++; break;
+      case '--app-id':
+        if (!next || next.startsWith('--')) throw new Error('--app-id requires a value');
+        args.appId = next; i++; break;
+      case '--app-secret':
+        if (!next || next.startsWith('--')) throw new Error('--app-secret requires a value');
+        args.appSecret = next; i++; break;
+      case '--agent-id':
+        if (!next || next.startsWith('--')) throw new Error('--agent-id requires a value');
+        args.agentId = next; i++; break;
+      case '--chat-ids':
+        if (!next || next.startsWith('--')) throw new Error('--chat-ids requires a value');
+        args.chatIds = next.split(','); i++; break;
       default: throw new Error(`Unknown flag: ${argv[i]}`);
     }
   }
@@ -42,9 +52,15 @@ export function parseDiscoverArgs(argv: string[]): DiscoverArgs {
   for (let i = 0; i < argv.length; i++) {
     const next = argv[i + 1];
     switch (argv[i]) {
-      case '--platform': args.platform = next; i++; break;
-      case '--app-id': args.appId = next; i++; break;
-      case '--app-secret': args.appSecret = next; i++; break;
+      case '--platform':
+        if (!next || next.startsWith('--')) throw new Error('--platform requires a value');
+        args.platform = next; i++; break;
+      case '--app-id':
+        if (!next || next.startsWith('--')) throw new Error('--app-id requires a value');
+        args.appId = next; i++; break;
+      case '--app-secret':
+        if (!next || next.startsWith('--')) throw new Error('--app-secret requires a value');
+        args.appSecret = next; i++; break;
       case '--timeout-ms': {
         const ms = Number(next);
         if (ms !== ms || ms < 0) {

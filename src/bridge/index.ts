@@ -2,14 +2,17 @@ import type { ChannelId, SessionId } from '../core/types.js';
 import type { AcpSession } from '../acp/session.js';
 import type { PlatformClient } from '../core/client.js';
 import type { Router } from '../core/router.js';
+import type { AgentNotification } from '../acp/handler.js';
 
 /**
  * Bridge — bidirectional message loop between cloud platform and ACP agents.
  *
  * - Cloud → Agent: reads cloud messages, resolves agent via router,
  *   gets/creates a session, and prompts the ACP agent.
- * - Agent → Cloud: reads agent notifications, resolves the chatId from
- *   the sessionId (reverse-mapping), and sends the reply to the cloud.
+ * - Agent → Cloud: reads agent notifications and proactive messages,
+ *   resolves the chatId from the sessionId (reverse-mapping for
+ *   notifications; uses the chatId directly for proactive messages),
+ *   and sends the reply to the cloud.
  *
  * Both loops run concurrently inside run() and are stopped by close().
  */
@@ -32,11 +35,12 @@ export class Bridge {
 
   /**
    * Run the bidirectional message loop.
-   * Starts two concurrent async loops:
+   * Starts three concurrent async loops:
    *   1. cloudMessagesLoop — forwards cloud messages to ACP agents.
-   *   2. agentNotificationsLoop — forwards agent replies back to the cloud.
+   *   2. agentNotificationsLoop — forwards session notifications back to the cloud.
+   *   3. agentProactiveLoop — forwards proactive (send_message) messages to the cloud.
    *
-   * Both loops abort when close() is called or the instance is destroyed.
+   * All loops abort when close() is called or the instance is destroyed.
    */
   async run(): Promise<void> {
     if (this.#closed) return;
@@ -69,14 +73,17 @@ export class Bridge {
         }
       } catch (err) {
         console.error('[Bridge]', err);
-        // Abort the other loop so both exit together
+        // Abort the other loops so all exit together
         this.#abortCtrl.abort();
       }
     })();
 
-    // Agent → Cloud loop
+    // Agent → Cloud loop (session notifications)
     const agentNotificationsLoop = (async () => {
-      let lastNotifSessionId: SessionId | undefined;
+      // Track all session IDs seen during this notifications loop so we can clean
+      // them ALL up when the loop ends — not just the last one (which was the
+      // original memory leak).
+      const seenSessions = new Set<SessionId>();
       try {
         for await (const notif of this.#acp.notifications()) {
           if (signal.aborted) break;
@@ -84,7 +91,7 @@ export class Bridge {
           const chatId = this.#sessionToChat.get(notif.sessionId);
           if (!chatId) continue; // no known chat for this session — discard
 
-          lastNotifSessionId = notif.sessionId;
+          seenSessions.add(notif.sessionId);
           try {
             await this.#cloud.send(chatId, { type: 'text', text: notif.content });
           } catch {
@@ -95,20 +102,40 @@ export class Bridge {
         console.error('[Bridge] notifications loop error:', err);
         this.#abortCtrl.abort();
       } finally {
-        // Clean up the last-seen session mapping when the notifications iterator ends
-        if (lastNotifSessionId != null) {
-          this.#sessionToChat.delete(lastNotifSessionId);
+        // Clean up ALL seen session mappings when the loop exits — fixing the
+        // original leak where only lastNotifSessionId was cleaned up.
+        for (const sid of seenSessions) {
+          this.#sessionToChat.delete(sid);
         }
       }
     })();
 
-    await Promise.all([cloudMessagesLoop, agentNotificationsLoop]);
+    // Agent → Cloud loop (proactive / send_message)
+    // These messages carry their own chatId and do not require session mapping.
+    const agentProactiveLoop = (async () => {
+      try {
+        for await (const proactive of this.#acp.proactiveMessages()) {
+          if (signal.aborted) break;
+
+          const chatId = proactive.chatId;
+          try {
+            await this.#cloud.send(chatId, { type: 'text', text: proactive.content });
+          } catch {
+            // send error — continue processing other messages
+          }
+        }
+      } catch (err) {
+        console.error('[Bridge] proactive loop error:', err);
+        this.#abortCtrl.abort();
+      }
+    })();
+
+    await Promise.all([cloudMessagesLoop, agentNotificationsLoop, agentProactiveLoop]);
   }
 
   /**
    * Stop the message loop.
-   * Aborts both the cloud-messages and agent-notifications loops,
-   * then closes the underlying cloud and ACP connections.
+   * Aborts all loops, then closes the underlying cloud and ACP connections.
    */
   async close(): Promise<void> {
     if (this.#closed) return;

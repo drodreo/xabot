@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bridge } from './index.js';
 import { Router } from '../core/router.js';
 import { agentId, channelId, sessionId, messageId, userId, type ChannelId, type SessionId, type Message } from '../core/types.js';
-import type { AgentNotification } from '../acp/handler.js';
+import type { AgentNotification, ProactiveMessage } from '../acp/handler.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +103,7 @@ describe('Bridge', () => {
     getOrCreateSession: vi.fn<(chatId: ChannelId) => Promise<ReturnType<typeof sessionId>>>(),
     prompt: vi.fn<(sid: SessionId, content: { type: string; text: string }[]) => Promise<void>>(),
     notifications: () => asyncIter<AgentNotification>([]),
+    proactiveMessages: () => asyncIter<ProactiveMessage>([]),
     close: vi.fn<() => void>(),
   };
 
@@ -115,6 +116,7 @@ describe('Bridge', () => {
     acpFns.getOrCreateSession = vi.fn();
     acpFns.prompt = vi.fn().mockResolvedValue(undefined);
     acpFns.notifications = () => asyncIter<AgentNotification>([]);
+    acpFns.proactiveMessages = () => asyncIter<ProactiveMessage>([]);
     acpFns.close = vi.fn();
 
     bridge = new Bridge(
@@ -131,6 +133,7 @@ describe('Bridge', () => {
         getOrCreateSession: acpFns.getOrCreateSession,
         prompt: acpFns.prompt,
         notifications: () => acpFns.notifications(),
+        proactiveMessages: () => acpFns.proactiveMessages(),
         close: acpFns.close,
       } as never,
       router,
@@ -369,5 +372,80 @@ describe('Bridge', () => {
     expect(acpFns.prompt).toHaveBeenCalledWith(sidA, [
       { type: 'text', text: '[image: https://cdn.example.com/photo.png]' },
     ]);
+  });
+
+  // ── Proactive / send_message ──────────────────────────────────────────────
+
+  it('send_message is sent to cloud via the chatId from the proactive message', async () => {
+    const chatA = channelId('chat-a');
+    const proactiveQueue = new ManualIter<ProactiveMessage>();
+    acpFns.proactiveMessages = () => proactiveQueue.iter();
+
+    const runPromise = bridge.run();
+    proactiveQueue.push({ chatId: 'chat-a', content: 'proactive hello' });
+    proactiveQueue.stop();
+    await runPromise;
+
+    expect(cloudFns.send).toHaveBeenCalledWith(chatA, { type: 'text', text: 'proactive hello' });
+  });
+
+  it('send_message does not require session mapping — chatId is used directly', async () => {
+    // No cloud messages, no sessions created — just a proactive message
+    const proactiveQueue = new ManualIter<ProactiveMessage>();
+    acpFns.proactiveMessages = () => proactiveQueue.iter();
+
+    const runPromise = bridge.run();
+    proactiveQueue.push({ chatId: 'chat-orphan', content: 'no session needed' });
+    proactiveQueue.stop();
+    await runPromise;
+
+    expect(cloudFns.send).toHaveBeenCalledWith(channelId('chat-orphan'), { type: 'text', text: 'no session needed' });
+    expect(acpFns.getOrCreateSession).not.toHaveBeenCalled();
+  });
+
+  it('send_message and session notifications are both routed to cloud concurrently', async () => {
+    const chatA = channelId('chat-a');
+    router.register(agentId('agent-a'), [chatA]);
+    const sidA = sessionId('sid-a');
+
+    const notifQueue = new ManualIter<AgentNotification>();
+    const proactiveQueue = new ManualIter<ProactiveMessage>();
+
+    cloudFns.messages = () => asyncIter<Message>([msg(chatA, 'trigger')]);
+    acpFns.getOrCreateSession.mockResolvedValue(sidA);
+    acpFns.notifications = () => notifQueue.iter();
+    acpFns.proactiveMessages = () => proactiveQueue.iter();
+
+    const runPromise = bridge.run();
+    await new Promise((r) => setTimeout(r, 5)); // let cloud loop establish mapping
+
+    notifQueue.push(notif(sidA, 'session reply'));
+    proactiveQueue.push({ chatId: 'chat-b', content: 'proactive reply' });
+
+    notifQueue.stop();
+    proactiveQueue.stop();
+    await runPromise;
+
+    // Session notification → correct chatId via session mapping
+    expect(cloudFns.send).toHaveBeenCalledWith(chatA, { type: 'text', text: 'session reply' });
+    // Proactive message → chatId used directly (different chat)
+    expect(cloudFns.send).toHaveBeenCalledWith(channelId('chat-b'), { type: 'text', text: 'proactive reply' });
+  });
+
+  it('cloud.send() throwing in proactive loop does not crash Bridge', async () => {
+    const proactiveQueue = new ManualIter<ProactiveMessage>();
+    acpFns.proactiveMessages = () => proactiveQueue.iter();
+
+    cloudFns.send
+      .mockResolvedValueOnce(messageId('mid-1'))
+      .mockRejectedValueOnce(new Error('send failed'));
+
+    const runPromise = bridge.run();
+    proactiveQueue.push({ chatId: 'chat-a', content: 'msg-1' });
+    proactiveQueue.push({ chatId: 'chat-b', content: 'msg-2' });
+    proactiveQueue.stop();
+    await runPromise;
+
+    expect(cloudFns.send).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,52 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { channelId, sessionId } from '../core/types.js';
-import type { SessionId } from '../core/types.js';
+import type { ChannelId, SessionId } from '../core/types.js';
+import { sessionId as makeSessionId } from '../core/types.js';
+import type { Client } from '@agentclientprotocol/sdk';
+import {
+  AcpHandler,
+  type AgentNotification,
+  type PermissionRequest,
+  type ProactiveMessage,
+} from './handler.js';
+import { Readable, Writable } from 'node:stream';
 
 // ---------------------------------------------------------------------------
 // Mock modules
 // ---------------------------------------------------------------------------
 
-interface MockClientConnection {
-  newSession: ReturnType<typeof vi.fn>;
+// Mutable references populated by vi.mock factory and updated in beforeEach.
+let _mockConn: {
+  __testInitialize: ReturnType<typeof vi.fn>;
+  __testNewSession: ReturnType<typeof vi.fn>;
   prompt: ReturnType<typeof vi.fn>;
-  initialize: ReturnType<typeof vi.fn>;
-  closed: Promise<void>;
-  signal: { aborted: boolean; addEventListener: ReturnType<typeof vi.fn> };
-}
+  startReader: ReturnType<typeof vi.fn>;
+  __testDispatch: ReturnType<typeof vi.fn>;
+};
+let _handler: AcpHandler;
+let _client: Client;
 
-let mockConn: MockClientConnection;
-
-vi.mock('@agentclientprotocol/sdk', () => {
-  mockConn = {
-    newSession: vi.fn<() => Promise<{ sessionId: string }>>(),
-    prompt: vi.fn<() => Promise<void>>(),
-    initialize: vi.fn<() => Promise<{ protocolVersion: number }>>(),
-    closed: Promise.resolve(),
-    signal: { aborted: false, addEventListener: vi.fn() },
-  };
-  const ClientSideConnectionMock = vi.fn(function(
-    _factory: unknown,
-    _stream: unknown,
-  ) {
-    const client = (_factory as (a: unknown) => Record<string, unknown>)(mockConn);
-    return { ...client, ...mockConn };
-  });
-  return {
-    ClientSideConnection: ClientSideConnectionMock,
-    AgentSideConnection: vi.fn(),
-    ndJsonStream: vi.fn().mockReturnValue({ readable: {}, writable: {} }),
-  };
-});
+vi.mock('@agentclientprotocol/sdk', () => ({
+  ndJsonStream: vi.fn().mockReturnValue({
+    readable: {
+      getReader: () => ({ read: async () => ({ done: true, value: undefined }) }),
+    },
+    writable: {
+      getWriter: () => ({ write: async () => {}, releaseLock: () => {} }),
+    },
+  }),
+  ClientSideConnection: vi.fn(),
+  AgentSideConnection: vi.fn(),
+}));
 
 vi.mock('node:process', () => ({
   cwd: vi.fn(() => '/fake/cwd'),
   stdin: { readable: {} },
   stdout: { writable: {} },
-}));
-
-vi.mock('node:stream/web', () => ({
-  ReadableStream: vi.fn(),
-  WritableStream: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -58,6 +54,29 @@ describe('AcpSession', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // Fresh mock connection for each test.
+    _mockConn = {
+      __testInitialize: vi.fn().mockResolvedValue({ protocolVersion: 1 }),
+      __testNewSession: vi.fn().mockImplementation(() =>
+        Promise.resolve({ sessionId: `test-${Math.random().toString(36).slice(2)}` }),
+      ),
+      prompt: vi.fn().mockResolvedValue(undefined),
+      startReader: vi.fn().mockImplementation((handler: AcpHandler, client: Client) => {
+        _handler = handler;
+        _client = client;
+      }),
+      __testDispatch: vi.fn().mockImplementation((msg: unknown) => {
+        const m = msg as { method: string; params: Record<string, unknown> };
+        if (m.method === 'send_message') {
+          _handler?.pushProactive({
+            chatId: m.params.chatId as string,
+            content: m.params.content as string,
+          });
+        }
+      }),
+    };
+
     const mod = await import('./session.js');
     AcpSession = mod.AcpSession;
   });
@@ -67,20 +86,20 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('connect() returns an AcpSession instance', async () => {
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     expect(session).toBeInstanceOf(AcpSession);
   });
 
   it('connect() calls ndJsonStream with stdout and stdin', async () => {
     const sdk = await import('@agentclientprotocol/sdk');
+    // Call without a connection argument so a real NDJSON stream is created.
     await AcpSession.connect();
     expect(sdk.ndJsonStream).toHaveBeenCalledOnce();
   });
 
-  it('connect() calls connection.initialize before returning', async () => {
-    mockConn.initialize.mockResolvedValueOnce({ protocolVersion: 1 });
-    await AcpSession.connect();
-    expect(mockConn.initialize).toHaveBeenCalledWith({ protocolVersion: 1 });
+  it('connect() calls __testInitialize before returning', async () => {
+    await AcpSession.connect(_mockConn as unknown as never);
+    expect(_mockConn.__testInitialize).toHaveBeenCalledTimes(1);
   });
 
   // -------------------------------------------------------------------------
@@ -88,33 +107,33 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('getOrCreateSession() creates a new session on first call', async () => {
-    mockConn.newSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
-    const session = await AcpSession.connect();
+    _mockConn.__testNewSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const chatId = channelId('chat-1');
 
     const sid = await session.getOrCreateSession(chatId);
 
-    expect(mockConn.newSession).toHaveBeenCalledTimes(1);
+    expect(_mockConn.__testNewSession).toHaveBeenCalledTimes(1);
     expect(sid).toBe('sid-1');
   });
 
   it('getOrCreateSession() reuses the same session for the same chatId', async () => {
-    mockConn.newSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
-    const session = await AcpSession.connect();
+    _mockConn.__testNewSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const chatId = channelId('chat-1');
 
     const sid1 = await session.getOrCreateSession(chatId);
     const sid2 = await session.getOrCreateSession(chatId);
 
     expect(sid1).toBe(sid2);
-    expect(mockConn.newSession).toHaveBeenCalledTimes(1);
+    expect(_mockConn.__testNewSession).toHaveBeenCalledTimes(1);
   });
 
   it('different chatIds get independent sessions', async () => {
-    mockConn.newSession
+    _mockConn.__testNewSession
       .mockResolvedValueOnce({ sessionId: 'sid-1' })
       .mockResolvedValueOnce({ sessionId: 'sid-2' });
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const chat1 = channelId('chat-1');
     const chat2 = channelId('chat-2');
 
@@ -122,7 +141,7 @@ describe('AcpSession', () => {
     const sid2 = await session.getOrCreateSession(chat2);
 
     expect(sid1).not.toBe(sid2);
-    expect(mockConn.newSession).toHaveBeenCalledTimes(2);
+    expect(_mockConn.__testNewSession).toHaveBeenCalledTimes(2);
   });
 
   // -------------------------------------------------------------------------
@@ -130,16 +149,15 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('prompt() sends the prompt to the correct session', async () => {
-    mockConn.newSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
-    mockConn.prompt.mockResolvedValueOnce(undefined);
-    const session = await AcpSession.connect();
+    _mockConn.__testNewSession.mockResolvedValueOnce({ sessionId: 'sid-1' });
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const chatId = channelId('chat-1');
     await session.getOrCreateSession(chatId);
 
     const content = [{ type: 'text', text: 'hello' }] as const;
     await session.prompt(sessionId('sid-1'), [...content]);
 
-    expect(mockConn.prompt).toHaveBeenCalledWith({
+    expect(_mockConn.prompt).toHaveBeenCalledWith({
       sessionId: 'sid-1',
       prompt: expect.arrayContaining([expect.objectContaining({ type: 'text' })]),
     });
@@ -150,16 +168,11 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('notifications() yields items pushed via client.sessionUpdate', async () => {
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const client = session.__testClient;
 
-    // Start the iterator — the async generator body runs on the first .next()
-    // call, which installs the pushNotification patch and suspends at
-    // `await waitNext`.  Callbacks triggered while suspended resolve that
-    // promise, causing the generator to resume and yield the queued item.
     const notifIter = session.notifications()[Symbol.asyncIterator]();
 
-    // Trigger the first notification.
     const next1 = notifIter.next();
     await (client.sessionUpdate as (n: unknown) => Promise<void>)({
       sessionId: sessionId('sid-1'),
@@ -169,7 +182,6 @@ describe('AcpSession', () => {
     expect(d1).toBe(false);
     expect((n1 as { sessionId: SessionId }).sessionId).toBe(sessionId('sid-1'));
 
-    // Trigger the second notification.
     const next2 = notifIter.next();
     await (client.sessionUpdate as (n: unknown) => Promise<void>)({
       sessionId: sessionId('sid-2'),
@@ -185,11 +197,9 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('permissionRequests() yields items via client.requestPermission', async () => {
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const client = session.__testClient;
 
-    // Same pattern as notifications(): start the iterator first so the patch
-    // is installed, then trigger the callback.
     const permIter = session.permissionRequests()[Symbol.asyncIterator]();
 
     const next1 = permIter.next();
@@ -204,25 +214,88 @@ describe('AcpSession', () => {
   });
 
   // -------------------------------------------------------------------------
+  // proactiveMessages()
+  // -------------------------------------------------------------------------
+
+  it('proactiveMessages() yields items dispatched via __testDispatch (send_message)', async () => {
+    const session = await AcpSession.connect(_mockConn as unknown as never);
+    const conn = session.__testConnection;
+
+    const proactiveIter = session.proactiveMessages()[Symbol.asyncIterator]();
+
+    const next1 = proactiveIter.next();
+    conn.__testDispatch({
+      jsonrpc: '2.0',
+      method: 'send_message',
+      params: { chatId: 'chat-1', content: 'hello proactive' },
+    });
+    const { value: p1, done: d1 } = await next1;
+    expect(d1).toBe(false);
+    expect((p1 as { chatId: string }).chatId).toBe('chat-1');
+    expect((p1 as { content: string }).content).toBe('hello proactive');
+
+    const next2 = proactiveIter.next();
+    conn.__testDispatch({
+      jsonrpc: '2.0',
+      method: 'send_message',
+      params: { chatId: 'chat-2', content: 'second proactive' },
+    });
+    const { value: p2, done: d2 } = await next2;
+    expect(d2).toBe(false);
+    expect((p2 as { chatId: string }).chatId).toBe('chat-2');
+  });
+
+  it('proactiveMessages() supports multiple concurrent consumers (multicast)', async () => {
+    const session = await AcpSession.connect(_mockConn as unknown as never);
+    const conn = session.__testConnection;
+
+    const iter1 = session.proactiveMessages()[Symbol.asyncIterator]();
+    const iter2 = session.proactiveMessages()[Symbol.asyncIterator]();
+
+    const next1a = iter1.next();
+    const next2a = iter2.next();
+    conn.__testDispatch({
+      jsonrpc: '2.0',
+      method: 'send_message',
+      params: { chatId: 'chat-multi', content: 'broadcast' },
+    });
+
+    const [r1, r2] = await Promise.all([next1a, next2a]);
+    expect(r1.done).toBe(false);
+    expect((r1.value as { content: string }).content).toBe('broadcast');
+    expect(r2.done).toBe(false);
+    expect((r2.value as { content: string }).content).toBe('broadcast');
+  });
+
+  it('close() while proactiveMessages() is suspended causes iterator to return done:true', async () => {
+    const session = await AcpSession.connect(_mockConn as unknown as never);
+    const proactiveIter = session.proactiveMessages()[Symbol.asyncIterator]();
+
+    const nextP = proactiveIter.next();
+
+    session.close();
+
+    const { done } = await nextP;
+    expect(done).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
   // close()
   // -------------------------------------------------------------------------
 
   it('close() does not throw', async () => {
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     expect(() => session.close()).not.toThrow();
   });
 
   it('close() while notifications() is suspended causes iterator to return done:true', async () => {
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const notifIter = session.notifications()[Symbol.asyncIterator]();
 
-    // Start iteration — it will suspend at waitNext (no items queued)
     const nextP = notifIter.next();
 
-    // Close the session while iterator is suspended
     session.close();
 
-    // Iterator should immediately return done: true
     const { done } = await nextP;
     expect(done).toBe(true);
   });
@@ -232,23 +305,23 @@ describe('AcpSession', () => {
   // -------------------------------------------------------------------------
 
   it('multiple chatIds maintain independent session state', async () => {
-    mockConn.newSession
+    _mockConn.__testNewSession
       .mockResolvedValueOnce({ sessionId: 'sid-A' })
       .mockResolvedValueOnce({ sessionId: 'sid-B' })
       .mockResolvedValueOnce({ sessionId: 'sid-C' });
-    const session = await AcpSession.connect();
+    const session = await AcpSession.connect(_mockConn as unknown as never);
     const chatA = channelId('room-A');
     const chatB = channelId('room-B');
     const chatC = channelId('room-C');
 
     const sidA1 = await session.getOrCreateSession(chatA);
     const sidB1 = await session.getOrCreateSession(chatB);
-    const sidA2 = await session.getOrCreateSession(chatA); // same, no new call
+    const sidA2 = await session.getOrCreateSession(chatA);
     const sidC1 = await session.getOrCreateSession(chatC);
 
     expect(sidA1).toBe(sidA2);
     expect(sidA1).not.toBe(sidB1);
     expect(sidB1).not.toBe(sidC1);
-    expect(mockConn.newSession).toHaveBeenCalledTimes(3);
+    expect(_mockConn.__testNewSession).toHaveBeenCalledTimes(3);
   });
 });

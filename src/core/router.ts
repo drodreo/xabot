@@ -17,7 +17,11 @@ export class Router {
         const otherChats = this.agentToChats.get(owner);
         if (otherChats) {
           const filtered = otherChats.filter((c) => c !== chatId);
-          this.agentToChats.set(owner, filtered);
+          if (filtered.length === 0) {
+            this.agentToChats.delete(owner);
+          } else {
+            this.agentToChats.set(owner, filtered);
+          }
         }
         this.chatToAgent.delete(chatId);
       }

@@ -6,6 +6,7 @@ import type {
   MessageContent,
 } from '../../core/types.js';
 import { StreamCapability, messageId, channelId, userId } from '../../core/types.js';
+import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type WechatMessageEvent } from './message.js';
 
 export interface WechatConfig {
@@ -56,7 +57,7 @@ export class WechatClient implements PlatformClient {
 
   private async fetchWithAuth(path: string, init?: RequestInit): Promise<Response> {
     if (!this.accessToken) {
-      throw new Error('WechatClient: not authenticated — call connect() first');
+      throw XabotError.auth('WechatClient: not authenticated — call connect() first');
     }
     const url = `${this.baseUrl}${path}`;
     const headers = {
@@ -80,13 +81,13 @@ export class WechatClient implements PlatformClient {
     });
 
     if (!res.ok) {
-      throw new Error(`WechatClient auth failed: HTTP ${res.status}`);
+      throw XabotError.auth(`WechatClient auth failed: HTTP ${res.status}`);
     }
 
     const json = (await res.json()) as { accessToken?: string; token?: string };
     const token = json.accessToken ?? json.token;
     if (!token) {
-      throw new Error('WechatClient auth failed: no access token in response');
+      throw XabotError.auth('WechatClient auth failed: no access token in response');
     }
     return token;
   }
@@ -139,12 +140,12 @@ export class WechatClient implements PlatformClient {
             retryDelay = 1000;
             continue;
           }
-          // 其他 4xx：不可重试，退出循环
-          if (res.status >= 400 && res.status < 500) {
+          // 不可重试的 4xx（明确客户端错误）
+          if (res.status === 400 || res.status === 403 || res.status === 404) {
             break; // 退出 while，不是 throw
           }
-          // 5xx：throw 进 catch 做 back-off 重试
-          throw new Error(`WechatClient poll error: HTTP ${res.status}`);
+          // 其他所有错误（含 5xx + 可重试 4xx 如 429/408/502）throw 进 back-off 重试
+          throw XabotError.platform(`WechatClient poll error: HTTP ${res.status}`);
         }
 
         // Reset back-off on successful poll
@@ -195,13 +196,13 @@ export class WechatClient implements PlatformClient {
     }
 
     if (!res.ok) {
-      throw new Error(`WechatClient send failed: HTTP ${res.status}`);
+      throw XabotError.platform(`WechatClient send failed: HTTP ${res.status}`);
     }
 
     const json = (await res.json()) as { msgId?: string; messageId?: string };
     const id = json.msgId ?? json.messageId;
     if (!id) {
-      throw new Error('WechatClient send failed: no msgId in response');
+      throw XabotError.platform('WechatClient send failed: no msgId in response');
     }
 
     return messageId(id);
@@ -244,7 +245,7 @@ export class WechatClient implements PlatformClient {
 
   async healthCheck(): Promise<void> {
     if (!this.connected || !this.accessToken) {
-      throw new Error('WechatClient not connected');
+      throw XabotError.platform('WechatClient not connected');
     }
     // Long-polling is the health check — if connect() succeeded, we're healthy.
   }

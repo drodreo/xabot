@@ -110,4 +110,84 @@ describe('AcpHandler', () => {
     expect(h.drainNotifications()).toHaveLength(1);
     expect(h.drainPermissions()).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // Proactive message queue
+  // ---------------------------------------------------------------------------
+
+  it('drainProactive on empty queue returns empty array', () => {
+    const h = new AcpHandler();
+    expect(h.drainProactive()).toEqual([]);
+  });
+
+  it('drain proactive returns and clears queue', () => {
+    const h = new AcpHandler();
+    h.pushProactive({ chatId: 'chat-1', content: 'hello proactive' });
+    h.pushProactive({ chatId: 'chat-2', content: 'second proactive' });
+
+    const out = h.drainProactive();
+    expect(out).toHaveLength(2);
+    expect(out[0]!.chatId).toBe('chat-1');
+    expect(out[0]!.content).toBe('hello proactive');
+
+    expect(h.drainProactive()).toHaveLength(0);
+  });
+
+  it('drainProactive returns messages in push order', () => {
+    const h = new AcpHandler();
+    h.pushProactive({ chatId: 'c1', content: 'first' });
+    h.pushProactive({ chatId: 'c2', content: 'second' });
+    h.pushProactive({ chatId: 'c3', content: 'third' });
+
+    const out = h.drainProactive();
+    expect(out[0]!.content).toBe('first');
+    expect(out[1]!.content).toBe('second');
+    expect(out[2]!.content).toBe('third');
+  });
+
+  it('draining proactive does not clear notification or permission queues', () => {
+    const h = new AcpHandler();
+    h.pushNotification({ sessionId: sessionId('s1'), content: 'n1' });
+    h.pushPermission({ sessionId: sessionId('s1'), name: 'p1', options: [] });
+    h.pushProactive({ chatId: 'c1', content: 'pro1' });
+
+    h.drainProactive();
+
+    expect(h.drainNotifications()).toHaveLength(1);
+    expect(h.drainPermissions()).toHaveLength(1);
+  });
+
+  it('draining notifications does not clear proactive queue', () => {
+    const h = new AcpHandler();
+    h.pushNotification({ sessionId: sessionId('s1'), content: 'n1' });
+    h.pushProactive({ chatId: 'c1', content: 'pro1' });
+
+    h.drainNotifications();
+
+    expect(h.drainProactive()).toHaveLength(1);
+  });
+
+  it('draining permissions does not clear proactive queue', () => {
+    const h = new AcpHandler();
+    h.pushPermission({ sessionId: sessionId('s1'), name: 'p1', options: [] });
+    h.pushProactive({ chatId: 'c1', content: 'pro1' });
+
+    h.drainPermissions();
+
+    expect(h.drainProactive()).toHaveLength(1);
+  });
+
+  it('all three queues are independent', () => {
+    const h = new AcpHandler();
+    h.pushNotification({ sessionId: sessionId('s1'), content: 'n1' });
+    h.pushPermission({ sessionId: sessionId('s1'), name: 'p1', options: [] });
+    h.pushProactive({ chatId: 'c1', content: 'pro1' });
+
+    h.drainNotifications();
+    h.drainPermissions();
+
+    expect(h.drainProactive()).toHaveLength(1);
+    expect(h.drainNotifications()).toHaveLength(0);
+    expect(h.drainPermissions()).toHaveLength(0);
+  });
 });

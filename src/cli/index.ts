@@ -45,15 +45,15 @@ function parsePlatformFlags(argv: string[]): PlatformFlags {
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
-    if (arg === '--platform' && i + 1 < argv.length) {
-      platform = argv[i + 1];
-      i += 2;
-    } else if (arg === '--app-id' && i + 1 < argv.length) {
-      appId = argv[i + 1];
-      i += 2;
-    } else if (arg === '--app-secret' && i + 1 < argv.length) {
-      appSecret = argv[i + 1];
-      i += 2;
+    if (arg === '--platform') {
+      if (i + 1 >= argv.length || argv[i + 1]!.startsWith('--')) throw new Error('--platform requires a value');
+      platform = argv[i + 1]; i += 2;
+    } else if (arg === '--app-id') {
+      if (i + 1 >= argv.length || argv[i + 1]!.startsWith('--')) throw new Error('--app-id requires a value');
+      appId = argv[i + 1]; i += 2;
+    } else if (arg === '--app-secret') {
+      if (i + 1 >= argv.length || argv[i + 1]!.startsWith('--')) throw new Error('--app-secret requires a value');
+      appSecret = argv[i + 1]; i += 2;
     } else {
       i++;
     }

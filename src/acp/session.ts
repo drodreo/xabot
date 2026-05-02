@@ -1,7 +1,7 @@
-import { ClientSideConnection, ndJsonStream, type SessionNotification, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
+import { ndJsonStream, type SessionNotification, type RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import type { Client } from '@agentclientprotocol/sdk';
-import { sessionId, type ChannelId, type SessionId } from '../core/types.js';
-import { AcpHandler, type AgentNotification, type PermissionRequest } from './handler.js';
+import { sessionId as makeSessionId, type ChannelId, type SessionId } from '../core/types.js';
+import { AcpHandler, type AgentNotification, type PermissionRequest, type ProactiveMessage } from './handler.js';
 import { Readable, Writable } from 'node:stream';
 import { ReadableStream, WritableStream } from 'node:stream/web';
 
@@ -9,19 +9,34 @@ import { ReadableStream, WritableStream } from 'node:stream/web';
  * AcpSession manages ACP sessions for downstream agent connections.
  *
  * Each chatId maps to one ACP SessionId. Sessions are created on demand
- * and multiplexed over a single ClientSideConnection (stdin/stdout).
+ * and multiplexed over a single NDJSON stream (stdin/stdout).
+ *
+ * Uses ndJsonStream directly (instead of ClientSideConnection) so that the
+ * raw stream can be read and custom message types such as `send_message`
+ * can be intercepted and routed to the proactive channel.
+ *
+ * ── Listener architecture ────────────────────────────────────────────────────
+ * AcpSession has its own Set-based listener registries (#notificationListeners,
+ * #permissionListeners, #proactiveListeners) separate from AcpHandler.
+ * This is intentional:
+ *   - AcpHandler listeners are used by the ACP cloud-side (e.g. Bridge push).
+ *   - AcpSession listeners are used by session-level consumers (notifications(),
+ *     permissionRequests(), proactiveMessages() async generators).
+ * Both layers get notified via Connection.#dispatch → handler.pushProactive(),
+ * which fan-outs to both the handler and session listener registries.
  */
 export class AcpSession {
   private readonly chatToSession = new Map<ChannelId, SessionId>();
-  private readonly connection: ClientSideConnection;
+  private readonly connection: Connection;
   readonly #handler: AcpHandler;
   readonly #client: Client;
   #abortCtrl = new AbortController();
 
   // Multicast listener registries — each call to notifications() /
-  // permissionRequests() registers its own listener on these sets.
+  // permissionRequests() / proactiveMessages() registers its own listener.
   readonly #notificationListeners = new Set<(n: AgentNotification) => void>();
   readonly #permissionListeners = new Set<(p: PermissionRequest) => void>();
+  readonly #proactiveListeners = new Set<(p: ProactiveMessage) => void>();
 
   /** Exposed for testing only — the underlying AcpHandler. */
   get __testHandler(): AcpHandler {
@@ -33,18 +48,18 @@ export class AcpSession {
     return this.#client;
   }
 
-  private constructor(connection: ClientSideConnection, handler: AcpHandler, client: Client) {
+  /** Exposed for testing only — the underlying Connection. */
+  get __testConnection(): Connection {
+    return this.connection;
+  }
+
+  private constructor(connection: Connection, handler: AcpHandler, client: Client) {
     this.connection = connection;
     this.#handler = handler;
     this.#client = client;
   }
 
-  /**
-   * Map an SDK SessionNotification → internal AgentNotification.
-   *
-   * The SDK type has a structured `update` discriminated union; we extract
-   * a meaningful text content string from it.
-   */
+  /** Map an SDK SessionNotification → internal AgentNotification. */
   #mapSessionNotification(params: SessionNotification): AgentNotification {
     const update = params.update as Record<string, unknown>;
     let content: string;
@@ -59,104 +74,95 @@ export class AcpSession {
     } else {
       content = String(update ?? '');
     }
-    return { sessionId: sessionId(params.sessionId as string), content };
+    return { sessionId: makeSessionId(params.sessionId as string), content };
   }
 
-  /**
-   * Map an SDK RequestPermissionRequest → internal PermissionRequest.
-   *
-   * SDK: { sessionId, options: PermissionOption[], toolCall: ToolCallUpdate }
-   * Internal: { sessionId, name: string, options: string[] }
-   */
+  /** Map an SDK RequestPermissionRequest → internal PermissionRequest. */
   #mapPermissionRequest(params: RequestPermissionRequest): PermissionRequest {
     const toolCall = params.toolCall as Record<string, unknown>;
     const toolName = typeof toolCall?.name === 'string' ? toolCall.name : '';
     return {
-      sessionId: sessionId(params.sessionId as string),
+      sessionId: makeSessionId(params.sessionId as string),
       name: toolName,
       options: params.options.map((o) => o.name),
     };
   }
 
-  /** Push a notification to all registered listeners. */
   #notifyListeners(n: AgentNotification): void {
     for (const fn of this.#notificationListeners) fn(n);
   }
 
-  /** Push a permission request to all registered listeners. */
   #notifyPermissionListeners(p: PermissionRequest): void {
     for (const fn of this.#permissionListeners) fn(p);
   }
 
+  #notifyProactiveListeners(p: ProactiveMessage): void {
+    for (const fn of this.#proactiveListeners) fn(p);
+  }
+
   /**
    * Establish an ACP connection over stdin/stdout.
+   *
+   * @param connection - Optional Connection instance for DI (used by tests).
+   *                     When omitted, a real Connection is created over stdin/stdout.
    */
-  static async connect(): Promise<AcpSession> {
-    const stdin = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
-    const stdout = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;
-    const stream = ndJsonStream(stdout, stdin);
+  static async connect(
+    connection?: Connection,
+  ): Promise<AcpSession> {
+    let conn: Connection;
+    if (connection) {
+      conn = connection;
+    } else {
+      const stdin = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
+      const stdout = Writable.toWeb(process.stdout) as WritableStream<Uint8Array>;
+      const stream = ndJsonStream(stdout, stdin);
+      conn = new Connection(stream);
+    }
 
     const handler = new AcpHandler();
 
-    // The session is created lazily so the Client callbacks can capture `session`
-    // via closure. This avoids the callback having a reference to an
-    // incompletely-initialised object.
+    // Late-bind `session` so client callbacks can capture it via closure.
+    // This avoids the callback having a reference to an incompletely-initialised object.
     let session: AcpSession | undefined;
 
-    // xabot implements the Client role: receives sessionUpdate notifications
-    // and requestPermission requests from the downstream agent.
     const client: Client = {
       sessionUpdate: async (params: SessionNotification) => {
-        if (session) session.#notifyListeners(session.#mapSessionNotification(params));
+        if (!session) return;
+        const n = session.#mapSessionNotification(params);
+        session.#notifyListeners(n);
       },
       requestPermission: async (params: RequestPermissionRequest) => {
-        if (session) session.#notifyPermissionListeners(session.#mapPermissionRequest(params));
+        if (!session) return { outcome: { outcome: 'cancelled' } };
+        const p = session.#mapPermissionRequest(params);
+        session.#notifyPermissionListeners(p);
         return { outcome: { outcome: 'cancelled' } };
       },
     };
 
-    const connection = new ClientSideConnection(
-      (_agent: unknown) => client as Client,
-      stream,
-    );
+    await (conn.__testInitialize ?? conn.initialize)({ protocolVersion: 1 });
+    conn.startReader(handler, client, () => session);
 
-    // ACP protocol requires an initialize handshake before any session methods.
-    // See: https://agentclientprotocol.com/protocol/initialization
-    await connection.initialize({ protocolVersion: 1 });
-
-    session = new AcpSession(connection, handler, client);
+    session = new AcpSession(conn, handler, client);
     return session;
   }
 
-  /**
-   * Get or create an ACP session for the given chatId.
-   * Multiple calls with the same chatId return the same SessionId.
-   */
   async getOrCreateSession(chatId: ChannelId): Promise<SessionId> {
     if (this.chatToSession.has(chatId)) {
       return this.chatToSession.get(chatId)!;
     }
-    const { sessionId: sid } = await this.connection.newSession({
+    const result = await (this.connection.__testNewSession ?? this.connection.newSession)({
       cwd: process.cwd(),
       mcpServers: [],
     });
+    const sid = makeSessionId(result.sessionId);
     this.chatToSession.set(chatId, sid);
     return sid;
   }
 
-  /**
-   * Send a prompt to the agent within an existing session.
-   */
-  async prompt(sessionId: SessionId, content: Parameters<ClientSideConnection['prompt']>[0]['content']): Promise<void> {
+  async prompt(sessionId: SessionId, content: Parameters<Connection['prompt']>[0]['prompt']): Promise<void> {
     await this.connection.prompt({ sessionId, prompt: content });
   }
 
-  /**
-   * Stream of session notifications from the agent.
-   *
-   * Supports multiple concurrent consumers — each call to notifications()
-   * gets its own independent iterator backed by its own queue.
-   */
   async *notifications(): AsyncIterable<AgentNotification> {
     const queue: AgentNotification[] = [];
     let resolveNext!: () => void;
@@ -189,11 +195,6 @@ export class AcpSession {
     }
   }
 
-  /**
-   * Stream of permission requests from the agent.
-   *
-   * Supports multiple concurrent consumers.
-   */
   async *permissionRequests(): AsyncIterable<PermissionRequest> {
     const queue: PermissionRequest[] = [];
     let resolveNext!: () => void;
@@ -226,9 +227,220 @@ export class AcpSession {
     }
   }
 
-  /** Close the ACP connection and abort all pending operations. */
+  async *proactiveMessages(): AsyncIterable<ProactiveMessage> {
+    const queue: ProactiveMessage[] = [];
+    let resolveNext!: () => void;
+    let waitNext = new Promise<void>((r) => { resolveNext = r; });
+
+    const abortPromise = new Promise<void>((resolve) => {
+      this.#abortCtrl.signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+
+    // Route through AcpHandler.addProactiveListener so that
+    // Connection.__testDispatch → handler.pushProactive reaches our listener.
+    const listener = (p: ProactiveMessage) => {
+      queue.push(p);
+      resolveNext();
+      waitNext = new Promise<void>((r) => { resolveNext = r; });
+    };
+    const unsubscribe = this.#handler.addProactiveListener(listener);
+    try {
+      while (true) {
+        if (this.#abortCtrl.signal.aborted) break;
+        const currentWaitNext = waitNext;
+        if (queue.length === 0) {
+          await Promise.race([currentWaitNext, abortPromise]);
+          if (this.#abortCtrl.signal.aborted) break;
+        }
+        while (queue.length > 0) {
+          yield queue.shift()!;
+        }
+      }
+    } finally {
+      unsubscribe();
+    }
+  }
+
   async close(): Promise<void> {
     this.#abortCtrl.abort();
     this.chatToSession.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Connection — thin wrapper around the NDJSON stream
+// ---------------------------------------------------------------------------
+
+type Stream = {
+  writable: WritableStream<import('@agentclientprotocol/sdk').AnyMessage>;
+  readable: ReadableStream<import('@agentclientprotocol/sdk').AnyMessage>;
+};
+
+/**
+ * Speaks ACP over an NDJSON stream (stdin/stdout).
+ *
+ * Unlike ClientSideConnection, this reads the raw NDJSON stream so that
+ * `send_message` notifications can be intercepted and routed to the proactive
+ * channel instead of being silently dropped.
+ */
+class Connection {
+  private readonly stream: Stream;
+  private readerStarted = false;
+  private readonly pendingRequests = new Map<string | number, {
+    resolve: (v: unknown) => void;
+    reject: (e: unknown) => void;
+  }>();
+  private nextId: number = 0;
+
+  // Stored during startReader so __testDispatch can use them
+  #handler?: AcpHandler;
+  #client?: Client;
+  #getSession?: () => AcpSession | undefined;
+
+  constructor(stream: Stream) {
+    this.stream = stream;
+  }
+
+  /**
+   * Bypass the NDJSON stream for initialize.
+   * Tests use this to avoid coordinating readable/writable streams.
+   */
+  __testInitialize(
+    _params?: { protocolVersion: number },
+  ): Promise<{ protocolVersion: number }> {
+    return Promise.resolve({ protocolVersion: 1 });
+  }
+
+  /**
+   * Bypass the NDJSON stream for newSession.
+   * Tests use this to avoid coordinating readable/writable streams.
+   */
+  __testNewSession(
+    _params?: { cwd: string; mcpServers: unknown[] },
+  ): Promise<{ sessionId: string }> {
+    return Promise.resolve({ sessionId: `test-${Math.random().toString(36).slice(2)}` });
+  }
+
+  /** Real initialize — sends over NDJSON. */
+  async initialize(params: { protocolVersion: number }): Promise<{ protocolVersion: number }> {
+    return (await this.#call('initialize', params)) as { protocolVersion: number };
+  }
+
+  /** Real newSession — sends over NDJSON. */
+  async newSession(params: { cwd: string; mcpServers: unknown[] }): Promise<{ sessionId: string }> {
+    return (await this.#call('newSession', params)) as { sessionId: string };
+  }
+
+  /** Real prompt — sends over NDJSON. */
+  async prompt(params: { sessionId: string; prompt: unknown[] }): Promise<void> {
+    await this.#call('prompt', params);
+  }
+
+  /**
+   * Start reading the NDJSON stream and dispatching messages to the
+   * appropriate handler callbacks.
+   */
+  startReader(
+    handler: AcpHandler,
+    client: Client,
+    getSession: () => AcpSession | undefined,
+  ): void {
+    if (this.readerStarted) return;
+    this.readerStarted = true;
+    this.#handler = handler;
+    this.#client = client;
+    this.#getSession = getSession;
+
+    const reader = this.stream.readable.getReader();
+
+    // Schedule pump asynchronously so that connect() can complete initialize()
+    // before the stream-reading pump starts.  Inside the async pump, each
+    // reader.read() suspends until data arrives on the readable stream.
+    Promise.resolve().then(function pump(this: Connection) {
+      reader.read().then(({ done, value }) => {
+        if (done) return;
+        if (value) this.#dispatch(value, handler, client, getSession);
+        if (!this.readerStarted) return;
+        pump.call(this);
+      }).catch((err) => {
+        if (this.readerStarted) {
+          console.error('[AcpSession] reader error:', err);
+        }
+      });
+    }.bind(this));
+  }
+
+  /**
+   * Set up the internal state needed by __testDispatch.
+   * Used by tests when a plain object is passed to AcpSession.connect().
+   */
+  __testSetup(handler: AcpHandler, client: Client, getSession: () => AcpSession | undefined): void {
+    this.#handler = handler;
+    this.#client = client;
+    this.#getSession = getSession;
+  }
+
+  /**
+   * Dispatch a parsed message directly — bypasses the NDJSON reader.
+   * Used in tests to inject messages without mocking TextDecoder / Uint8Array.
+   */
+  __testDispatch(msg: import('@agentclientprotocol/sdk').AnyMessage): void {
+    if (this.#handler && this.#client) {
+      this.#dispatch(msg, this.#handler, this.#client, this.#getSession ?? (() => undefined));
+    }
+  }
+
+  #dispatch(
+    msg: import('@agentclientprotocol/sdk').AnyMessage,
+    handler: AcpHandler,
+    client: Client,
+    _getSession: () => AcpSession | undefined,
+  ): void {
+    if ('id' in msg && this.pendingRequests.has(msg.id as string | number)) {
+      const entry = this.pendingRequests.get(msg.id as string | number)!;
+      this.pendingRequests.delete(msg.id as string | number);
+      if ('error' in msg) {
+        entry.reject(new Error((msg as { error: { message: string } }).error.message));
+      } else {
+        entry.resolve((msg as { result: unknown }).result);
+      }
+      return;
+    }
+
+    if (!('id' in msg) && 'method' in msg) {
+      const method = msg.method;
+      const params = msg.params;
+
+      if (method === 'sessionUpdate') {
+        client.sessionUpdate(params as SessionNotification);
+      } else if (method === 'requestPermission') {
+        client.requestPermission(params as RequestPermissionRequest);
+      } else if (method === 'send_message') {
+        const p = params as { chatId: string; content: string };
+        handler.pushProactive({ chatId: p.chatId as ChannelId, content: p.content });
+      }
+      return;
+    }
+  }
+
+  async #call(method: string, params: unknown): Promise<unknown> {
+    const id = this.nextId++;
+    const msg: import('@agentclientprotocol/sdk').AnyMessage = {
+      jsonrpc: '2.0',
+      id,
+      method,
+      params,
+    };
+
+    const writer = this.stream.writable.getWriter();
+    try {
+      await writer.write(msg);
+    } finally {
+      writer.releaseLock();
+    }
+
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject });
+    });
   }
 }

@@ -8,6 +8,7 @@ import {
 import type { PlatformClient } from '../../core/client.js';
 import type { ChannelId, MessageId, Message, MessageContent } from '../../core/types.js';
 import { StreamCapability, channelId, messageId, userId } from '../../core/types.js';
+import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
 
 export interface FeishuClientConfig {
@@ -76,8 +77,12 @@ export class FeishuClient implements PlatformClient {
     await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
     this.connected = true;
     // Resolve any iterator that was waiting before the connection was established.
+    // Pass a valid empty event so toStandardMessage() doesn't crash on undefined.
     if (this.messageResolve) {
-      this.messageResolve(undefined as any);
+      this.messageResolve({
+        sender: { sender_type: '' },
+        message: { message_id: '', chat_id: '', create_time: '', chat_type: '', message_type: '', content: '' },
+      });
       this.messageResolve = null;
     }
   }
@@ -96,11 +101,11 @@ export class FeishuClient implements PlatformClient {
     });
 
     if (result.code !== 0) {
-      throw new Error(`Feishu API error: code=${result.code}, msg=${result.msg}`);
+      throw XabotError.platform(`Feishu API error: code=${result.code}, msg=${result.msg}`);
     }
 
     if (!result.data?.message_id) {
-      throw new Error('Feishu send failed: no message_id returned');
+      throw XabotError.platform('Feishu send failed: no message_id returned');
     }
     return messageId(result.data.message_id);
   }
@@ -143,7 +148,7 @@ export class FeishuClient implements PlatformClient {
 
   async healthCheck(): Promise<void> {
     if (!this.connected) {
-      throw new Error('FeishuClient not connected');
+      throw XabotError.platform('FeishuClient not connected');
     }
     // WSClient doesn't expose a direct health check API.
     // We consider the connection healthy if connect() succeeded
