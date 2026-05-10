@@ -54,8 +54,10 @@ function imageMsg(chatId: ChannelId, senderId: string, url: string): Message {
 
 describe('discover', () => {
   it('returns chatId when a message with the correct pairing code is received', async () => {
-    const output: string[] = [];
-    const writer = (chunk: string) => output.push(chunk);
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const writer = (chunk: string) => stdout.push(chunk);
+    const errWriter = (chunk: string) => stderr.push(chunk);
 
     const chat = channelId('chat-alpha');
     const CODE = 'TESTAB';
@@ -63,12 +65,14 @@ describe('discover', () => {
     const result = await discover(mockClient([textMsg(chat, 'user1', CODE)]), {
       timeoutMs: FAST_TIMEOUT,
       writer,
+      stderr: errWriter,
       pairingCode: CODE,
     });
 
     expect(result).toBe(chat);
-    expect(output.join('')).toMatch(/配对码：TESTAB/);
-    expect(output.join('')).toMatch(/配对成功/);
+    expect(stderr.join('')).toMatch(/配对码：TESTAB/);
+    const json = JSON.parse(stdout.join('').trim());
+    expect(json).toEqual({ ok: true, chatId: 'chat-alpha' });
   });
 
   it('throws DiscoverTimeoutError when no matching message arrives before timeout', async () => {
@@ -86,8 +90,8 @@ describe('discover', () => {
   });
 
   it('ignores wrong pairing codes and succeeds when a later message matches', async () => {
-    const output: string[] = [];
-    const writer = (chunk: string) => output.push(chunk);
+    const stdout: string[] = [];
+    const writer = (chunk: string) => stdout.push(chunk);
 
     const chat = channelId('chat-beta');
     const CODE = 'PAIRCD';
@@ -101,11 +105,13 @@ describe('discover', () => {
 
     const result = await discover(client, { timeoutMs: FAST_TIMEOUT, writer, pairingCode: CODE });
     expect(result).toBe(chat);
+    const json = JSON.parse(stdout.join('').trim());
+    expect(json).toEqual({ ok: true, chatId: 'chat-beta' });
   });
 
   it('ignores non-text messages and succeeds when a text message with the correct code arrives', async () => {
-    const output: string[] = [];
-    const writer = (chunk: string) => output.push(chunk);
+    const stdout: string[] = [];
+    const writer = (chunk: string) => stdout.push(chunk);
 
     const chat = channelId('chat-gamma');
     const CODE = 'IMGCODE';
@@ -118,19 +124,21 @@ describe('discover', () => {
 
     const result = await discover(client, { timeoutMs: FAST_TIMEOUT, writer, pairingCode: CODE });
     expect(result).toBe(chat);
+    const json = JSON.parse(stdout.join('').trim());
+    expect(json).toEqual({ ok: true, chatId: 'chat-gamma' });
   });
 
-  it('outputs pairing code instruction immediately on call', async () => {
-    const output: string[] = [];
-    const writer = (chunk: string) => output.push(chunk);
+  it('outputs pairing code instruction to stderr', async () => {
+    const stderr: string[] = [];
+    const errWriter = (chunk: string) => stderr.push(chunk);
 
     const client = mockClient([textMsg(channelId('chat-x'), 'u1', 'NOMATCH')]);
 
     await expect(
-      discover(client, { timeoutMs: 60_000, writer, pairingCode: 'OUTCODE' }),
+      discover(client, { timeoutMs: 60_000, stderr: errWriter, pairingCode: 'OUTCODE' }),
     ).rejects.toThrow(DiscoverTimeoutError);
 
-    const combined = output.join('');
+    const combined = stderr.join('');
     expect(combined).toMatch(/配对码：OUTCODE/);
     expect(combined).toMatch(/60 秒内/);
   });

@@ -35,6 +35,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
     WSClient: MockWSClient,
     EventDispatcher: MockEventDispatcher,
     Domain: { Feishu: 'feishu' },
+    LoggerLevel: { info: 2, debug: 3, trace: 4 },
   };
 });
 
@@ -218,10 +219,18 @@ describe('FeishuClient', () => {
   });
 
   describe('healthCheck()', () => {
-    it('resolves when connected', async () => {
+    it('resolves when connected and API returns valid token', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, tenant_access_token: 'mock-token' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
       const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
       await client.connect();
       await expect(client.healthCheck()).resolves.toBeUndefined();
+
+      vi.unstubAllGlobals();
     });
 
     it('throws when not connected', async () => {
@@ -229,6 +238,19 @@ describe('FeishuClient', () => {
       await expect(client.healthCheck()).rejects.toThrow(
         'FeishuClient not connected',
       );
+    });
+
+    it('throws when fetch fails', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+      await client.connect();
+      await expect(client.healthCheck()).rejects.toThrow('Feishu auth failed');
+
+      vi.unstubAllGlobals();
     });
   });
 
@@ -247,6 +269,62 @@ describe('FeishuClient', () => {
       await expect(client.healthCheck()).rejects.toThrow(
         'FeishuClient not connected',
       );
+    });
+  });
+
+  describe('listEventSubscriptions()', () => {
+    it('returns the event list on success', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0, tenant_access_token: 'mock-token' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({ code: 0, data: { events: ['im.message.receive_v1', 'im.message.send_v1'] } }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+      await client.connect();
+      const result = await client.listEventSubscriptions();
+      expect(result).toEqual(['im.message.receive_v1', 'im.message.send_v1']);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('throws when HTTP request fails', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+      await client.connect();
+      await expect(client.listEventSubscriptions()).rejects.toThrow('HTTP 401');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('throws when API returns non-zero code', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0, tenant_access_token: 'mock-token' }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 999, msg: 'permission denied' }),
+        });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+      await client.connect();
+      await expect(client.listEventSubscriptions()).rejects.toThrow('code=999');
+
+      vi.unstubAllGlobals();
     });
   });
 });

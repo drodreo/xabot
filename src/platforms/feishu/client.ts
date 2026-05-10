@@ -3,6 +3,7 @@ import {
   WSClient,
   EventDispatcher,
   Domain,
+  LoggerLevel,
 } from '@larksuiteoapi/node-sdk';
 
 import type { PlatformClient } from '../../core/client.js';
@@ -11,10 +12,15 @@ import { StreamCapability, channelId, messageId, userId } from '../../core/types
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
 
+export type LogLevel = 'info' | 'debug' | 'trace';
+
 export interface FeishuClientConfig {
   appId: string;
   appSecret: string;
+  logLevel?: LogLevel;
 }
+
+const DEFAULT_LOG_LEVEL: LogLevel = 'info';
 
 /**
  * Feishu platform client using WebSocket long connection.
@@ -38,19 +44,22 @@ export class FeishuClient implements PlatformClient {
   constructor(config: FeishuClientConfig) {
     this.config = config;
 
-    this.wsClient = new WSClient({
-      appId: config.appId,
-      appSecret: config.appSecret,
-      domain: Domain.Feishu,
-    });
+    const level = config.logLevel ?? DEFAULT_LOG_LEVEL;
+    const sdkLevel =
+      level === 'trace' ? LoggerLevel.trace : level === 'debug' ? LoggerLevel.debug : LoggerLevel.info;
 
-    this.httpClient = new Client({
-      appId: config.appId,
-      appSecret: config.appSecret,
-      domain: Domain.Feishu,
-    });
+    // Conditionally add loggerLevel – the SDK types use exactOptionalPropertyTypes
+    // which rejects implicit undefined, so we build the options object in two steps.
+    const wsBase = { appId: config.appId, appSecret: config.appSecret, domain: Domain.Feishu };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.wsClient = new WSClient({ ...wsBase, loggerLevel: sdkLevel }) as any;
 
-    this.eventDispatcher = new EventDispatcher({});
+    const httpBase = { appId: config.appId, appSecret: config.appSecret, domain: Domain.Feishu };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.httpClient = new Client({ ...httpBase, loggerLevel: sdkLevel }) as any;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.eventDispatcher = new EventDispatcher({ loggerLevel: sdkLevel }) as any;
 
     // Register the message receive handler — push events into a queue
     // that messages() async generator will consume.
@@ -146,13 +155,56 @@ export class FeishuClient implements PlatformClient {
     return StreamCapability.NonStreaming;
   }
 
+  /**
+   * Fetch a fresh tenant_access_token from Feishu.
+   */
+  private async fetchTenantToken(): Promise<string> {
+    const res = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: this.config.appId, app_secret: this.config.appSecret }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      throw XabotError.platform(`Feishu auth failed: HTTP ${res.status}`);
+    }
+
+    const json = (await res.json()) as { code?: number; msg?: string; tenant_access_token?: string };
+    if (json.code !== 0 || !json.tenant_access_token) {
+      throw XabotError.platform(`Feishu auth failed: code=${json.code}, msg=${json.msg}`);
+    }
+    return json.tenant_access_token;
+  }
+
+  /**
+   * List subscribed event types by calling the event subscription list API.
+   */
+  async listEventSubscriptions(): Promise<string[]> {
+    const token = await this.fetchTenantToken();
+    const res = await fetch('https://open.feishu.cn/open-apis/event/v1/app/event_subscription', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!res.ok) {
+      throw XabotError.platform(`Feishu event subscription list failed: HTTP ${res.status}`);
+    }
+
+    const json = (await res.json()) as { code?: number; msg?: string; data?: { events?: string[] } };
+    if (json.code !== 0) {
+      throw XabotError.platform(`Feishu event subscription list failed: code=${json.code}, msg=${json.msg}`);
+    }
+
+    return json.data?.events ?? [];
+  }
+
   async healthCheck(): Promise<void> {
     if (!this.connected) {
       throw XabotError.platform('FeishuClient not connected');
     }
-    // WSClient doesn't expose a direct health check API.
-    // We consider the connection healthy if connect() succeeded
-    // and close() hasn't been called.
+    // Verify credentials + API reachability by fetching a fresh tenant token.
+    await this.fetchTenantToken();
   }
 
   async close(): Promise<void> {
