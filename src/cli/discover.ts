@@ -65,10 +65,10 @@ async function runFeishuDiagnostics(
   // 1. REST API health check
   try {
     await client.healthCheck();
-    writer(`✅ REST API 连通\n`);
+    writer(`✅ REST API reachable\n`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    writer(`⚠️ REST API 探活失败: ${msg}\n`);
+    writer(`⚠️ REST API health check failed: ${msg}\n`);
     // Non-fatal — continue to pairing phase
   }
 
@@ -76,15 +76,15 @@ async function runFeishuDiagnostics(
   if (client.listEventSubscriptions) {
     try {
       const events = await client.listEventSubscriptions();
-      writer(`已订阅事件: [${events.join(', ')}]\n`);
+      writer(`Subscribed events: [${events.join(', ')}]\n`);
       if (events.includes('im.message.receive_v1')) {
-        writer(`✅ 已订阅 im.message.receive_v1\n`);
+        writer(`✅ Subscribed to im.message.receive_v1\n`);
       } else {
-        writer(`⚠️ 未订阅 im.message.receive_v1，消息接收可能失败\n`);
+        writer(`⚠️ Not subscribed to im.message.receive_v1, message reception may fail\n`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      writer(`⚠️ 事件订阅查询失败: ${msg}\n`);
+      writer(`⚠️ Event subscription query failed: ${msg}\n`);
       // Non-fatal — doesn't mean pairing won't work
     }
   }
@@ -120,7 +120,7 @@ export async function discover(
 
   // Tell the user which code to send (human-readable prompt → stderr)
   const seconds = timeoutMs / 1000;
-  stderr(`请在 ${seconds} 秒内给 bot 发送以下配对码：${code}\n`);
+  stderr(`Send the following pairing code to the bot within ${seconds} seconds: ${code}\n`);
 
   // Race: message matching vs. timeout
   const matchPromise = (async (): Promise<ChannelId | undefined> => {

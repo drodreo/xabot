@@ -31,6 +31,6 @@ export async function send(
 
   const content: MessageContent = { type: 'text', text };
   const msgId = await client.send(chatId, content);
-  writer(`已发送消息至 ${chatId}，msgId: ${msgId}\n`);
+  writer(`Message sent to ${chatId}, msgId: ${msgId}\n`);
   return msgId;
 }

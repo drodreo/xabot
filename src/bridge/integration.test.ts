@@ -1,12 +1,12 @@
 /**
- * Bridge 集成测试 — 基于 XACPP mock 的端到端数据流验证
+ * Bridge integration tests — end-to-end data flow verification based on XACPP mocks
  *
- * 覆盖核心链路：
+ * Covers core paths:
  *   L1: PlatformClient.messages() → Bridge → XacppSession.requestCommand()
  *   L2: XabotSessionHandler.onEvent() → Bridge.handleEvent() → PlatformClient.send()
- *   L3: 多 chatId 路由隔离
- *   L4: action_request 阻塞/解除
- *   L5: cloud.send 失败后 pending 清理
+ *   L3: Multiple chatId routing isolation
+ *   L4: action_request block/resolve
+ *   L5: cloud.send failure cleanup
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

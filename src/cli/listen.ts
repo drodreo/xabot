@@ -75,7 +75,7 @@ export async function listen(
   })());
 
   // Task 2: Stdin → cloud
-  stderr('输入消息并回车发送（Ctrl+C 退出）\n');
+  stderr('Type a message and press Enter to send (Ctrl+C to exit)\n');
   tasks.push((async () => {
     const rl = createInterface({ input: stdin as NodeJS.ReadableStream });
     try {
@@ -86,7 +86,7 @@ export async function listen(
           await client.send(chatId, { type: 'text', text });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          stderr(`发送失败: ${msg}\n`);
+          stderr(`Send failed: ${msg}\n`);
         }
       }
     } finally {

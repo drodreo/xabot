@@ -19,10 +19,10 @@ export class Bridge {
   /** activityId → chatId */
   private readonly activityToChat = new Map<string, ChannelId>();
 
-  /** establish 后获得，用于主动发 command/event */
+  /** Obtained after establish, used to proactively send command/event */
   private session: XacppSession | null = null;
 
-  /** 阻塞等待的 pending response：requestId → resolve */
+  /** Pending responses awaiting resolution: requestId → resolve */
   private readonly pendingResponses = new Map<string, (response: XacppResponse) => void>();
 
   private abortCtrl = new AbortController();
@@ -33,18 +33,18 @@ export class Bridge {
     this.transport = transport;
   }
 
-  /** establish 成功后调用，注入 session 引用。 */
+  /** Call after establish succeeds to inject session reference. */
   setSession(session: XacppSession): void {
     this.session = session;
   }
 
-  /** 处理下游 Agent 发来的 Command（通过 XabotSessionHandler.onCommand 转发）。 */
+  /** Handle Command from downstream Agent (forwarded via XabotSessionHandler.onCommand). */
   async handleCommand(_command: XacppCommand): Promise<XacppResponse> {
-    // xabot 是 Responder，暂不主动处理 inbound command
+    // xabot is a Responder, does not actively handle inbound commands for now
     return { kind: 'acknowledge' };
   }
 
-  /** 处理下游 Agent 发来的 Event（通过 XabotSessionHandler.onEvent 转发）。 */
+  /** Handle Event from downstream Agent (forwarded via XabotSessionHandler.onEvent). */
   async handleEvent(activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
     const chatId = this.activityToChat.get(activityId);
 
@@ -87,7 +87,7 @@ export class Bridge {
         if (!chatId) return { kind: 'acknowledge' };
         const pendingPromise = this.waitForResponse(event.event.requestId);
         try {
-          const userMessage = `[授权请求] ${event.event.description}\n工具: ${event.event.toolName}\n请回复 approve 或 reject`;
+          const userMessage = `[Authorization Request] ${event.event.description}\nTool: ${event.event.toolName}\nReply approve or reject`;
           await this.cloud.send(chatId, { type: 'text', text: userMessage });
         } catch {
           this.pendingResponses.delete(event.event.requestId);
@@ -100,7 +100,7 @@ export class Bridge {
         if (!chatId) return { kind: 'acknowledge' };
         const pendingPromise = this.waitForResponse(event.event.requestId);
         try {
-          const questionMsg = `[提问] ${event.event.question}\n选项: ${event.event.options.join(', ')}`;
+          const questionMsg = `[Question] ${event.event.question}\nOptions: ${event.event.options.join(', ')}`;
           await this.cloud.send(chatId, { type: 'text', text: questionMsg });
         } catch {
           this.pendingResponses.delete(event.event.requestId);
@@ -113,7 +113,7 @@ export class Bridge {
         if (!chatId) return { kind: 'acknowledge' };
         const pendingPromise = this.waitForResponse(event.event.requestId);
         try {
-          const opMsg = `[敏感信息操作] ${event.event.operation.type}`;
+          const opMsg = `[Sensitive Info Operation] ${event.event.operation.type}`;
           await this.cloud.send(chatId, { type: 'text', text: opMsg });
         } catch {
           this.pendingResponses.delete(event.event.requestId);
@@ -134,7 +134,7 @@ export class Bridge {
     }
   }
 
-  /** 解除阻塞等待的 action/question/sensitive_info_operation。 */
+  /** Resolve a pending action/question/sensitive_info_operation. */
   resolvePending(requestId: string, response: XacppResponse): void {
     const resolve = this.pendingResponses.get(requestId);
     if (resolve) {
@@ -143,7 +143,7 @@ export class Bridge {
     }
   }
 
-  /** 云端消息循环：PlatformClient.messages() → session.requestCommand */
+  /** Cloud message loop: PlatformClient.messages() → session.requestCommand */
   async run(): Promise<void> {
     if (this.closed) return;
 
@@ -158,7 +158,7 @@ export class Bridge {
 
         const chatId = msg.chatId;
 
-        // 查找或创建 activityId
+        // Find or create activityId
         let activityId = this.chatToActivity.get(chatId);
         if (!activityId) {
           const createResponse = await this.session.requestCommand({
@@ -173,7 +173,7 @@ export class Bridge {
           this.activityToChat.set(activityId, chatId);
         }
 
-        // 构造 ContentPart
+        // Build ContentPart
         const parts: ContentPart[] = [];
         if (msg.content.type === 'text') {
           parts.push({ type: 'text', text: msg.content.text });
@@ -215,7 +215,7 @@ export class Bridge {
     ]);
   }
 
-  /** 阻塞等待指定 requestId 的 response。 */
+  /** Wait for a response with the specified requestId. */
   private waitForResponse(requestId: string): Promise<XacppResponse> {
     return new Promise<XacppResponse>((resolve) => {
       this.pendingResponses.set(requestId, resolve);

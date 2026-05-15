@@ -29,9 +29,9 @@ export async function health(
     await client.healthCheck();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    writer(`❌ 健康检查失败: ${msg}\n`);
+    writer(`❌ Health check failed: ${msg}\n`);
     throw err;
   }
 
-  writer(`✅ ${client.platform} 连接正常\n`);
+  writer(`✅ ${client.platform} connection OK\n`);
 }

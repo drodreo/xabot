@@ -42,22 +42,22 @@ export async function run(
   const doClose = async () => {
     if (closed) return;
     closed = true;
-    writer('正在关闭 Bridge...\n');
+    writer('Shutting down Bridge...\n');
     await bridge.close();
     await peer.disconnect();
-    writer('Bridge 已关闭，退出。\n');
+    writer('Bridge closed, exiting.\n');
   };
 
   // Wire up termination signals.
   const onSignal = (label: string) => {
-    writer(`\n收到 ${label}，开始优雅关闭...\n`);
+    writer(`\nReceived ${label}, starting graceful shutdown...\n`);
     void doClose().then(() => process.exit(0));
   };
 
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
 
-  writer(`Bridge 模式启动，chatIds=[${chatIds.join(', ')}]\n`);
+  writer(`Bridge mode started, chatIds=[${chatIds.join(', ')}]\n`);
 
   await bridge.run();
   // Bridge.run() only resolves when the loops end (or close() was called).

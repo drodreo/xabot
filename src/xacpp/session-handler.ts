@@ -2,9 +2,9 @@ import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandl
 import type { Bridge } from '../bridge/index.js';
 
 /**
- * xabot 的 XacppSessionHandler 实现。
+ * XACPP SessionHandler implementation for xabot.
  *
- * 处理下游 Agent 发来的 Command 和 Event，通过回调桥接到 Bridge。
+ * Handles Commands and Events from the downstream Agent, bridging them to Bridge via callbacks.
  */
 export class XabotSessionHandler implements XacppSessionHandler {
   readonly sessionId: string;
@@ -14,7 +14,7 @@ export class XabotSessionHandler implements XacppSessionHandler {
     this.sessionId = sessionId;
   }
 
-  /** 注册 Bridge 引用（establish 完成后由外部注入）。 */
+  /** Register Bridge reference (injected externally after establish completes). */
   setBridge(bridge: Bridge): void {
     this.bridge = bridge;
   }

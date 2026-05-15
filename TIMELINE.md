@@ -1,137 +1,146 @@
-# xabot 时序图
+# xabot Sequence Diagrams
 
-## 1. 配对流程（一次性，首次使用时执行）
+## 1. Pairing Flow (one-time, executed on first use)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  xabot discover --platform feishu                        │
 │                 --app-id X --app-secret Y                │
 │                                                          │
-│  1. 生成配对码（随机 6 位字母数字）                         │
+│  1. Generate pairing code (random 6-char alphanumeric)   │
 │                                                          │
-│  2. 连接云端（WebSocket / 长轮询）                         │
+│  2. Connect to cloud (WebSocket / long-polling)          │
 │                                                          │
-│  3. 输出配对码到 stdout：                                 │
-│     "请在 60 秒内给 bot 发送以下配对码：ABC123"            │
+│  3. Output pairing code to stdout:                       │
+│     "Send the following pairing code to the bot          │
+│      within 60 seconds: ABC123"                          │
 │                                                          │
-│  4. 等待消息：                                            │
-│     ├─ 收到消息，内容 == 配对码 → 配对成功                 │
-│     │   提取 chatId，输出到 stdout，关闭连接               │
-│     ├─ 收到消息，内容 != 配对码 → 忽略，继续等             │
-│     └─ 超时（60s）未收到正确配对码 → 报错退出              │
+│  4. Wait for message:                                    │
+│     ├─ Received message, content == pairing code         │
+│     │   → pairing successful                             │
+│     │   Extract chatId, output to stdout, close          │
+│     │   connection                                       │
+│     ├─ Received message, content != pairing code         │
+│     │   → ignore, keep waiting                           │
+│     └─ Timeout (60s) without correct pairing code        │
+│         → error exit                                     │
 │                                                          │
-│  用户拿到 chatId 后，用于后续 acp 命令的 --chat-ids 参数   │
+│  After obtaining chatId, use it for subsequent acp       │
+│  command --chat-ids argument                             │
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
-│  方式二：用户手动获取 chatId                               │
-│  ├─ 飞书：通过飞书开放平台 API / 管理后台获取               │
-│  ├─ 微信：通过 ilink_bot 管理接口获取                      │
-│  └─ 拿到 chatId 后直接用于 acp 命令                       │
+│  Method 2: Manual chatId retrieval                       │
+│  ├─ Feishu: Via Feishu Open Platform API / admin console │
+│  ├─ WeChat: Via ilink_bot admin interface                │
+│  └─ Use chatId directly for acp commands                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 2. 启动时序
+## 2. Startup Sequence
 
 ```
-下游 Agent
+Downstream Agent
     │
-    ├─ 启动 xabot acp --platform feishu --app-id X --app-secret Y --agent-id Z --chat-ids a,b,c
+    ├─ Start xabot acp --platform feishu --app-id X --app-secret Y --agent-id Z --chat-ids a,b,c
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
 │ xabot CLI (index.ts)                                     │
 │                                                          │
-│  1. parseAcpArgs(argv) ──→ zod 校验 ──→ AcpArgs          │
+│  1. parseAcpArgs(argv) ──→ zod validation ──→ AcpArgs    │
 │                                                          │
-│  2. 创建 Router                                           │
+│  2. Create Router                                        │
 │     router.register(agentId, chatIds)                    │
 │                                                          │
-│  3. 创建 PlatformClient（根据 platform 参数）              │
+│  3. Create PlatformClient (based on platform parameter)  │
 │     ┌─────────────────────────────────────┐              │
 │     │ platform=feishu → FeishuClient      │              │
-│     │   connect() → WebSocket 长连接       │              │
+│     │   connect() → WebSocket connection   │              │
 │     │   SDK: @larksuite/node-sdk          │              │
 │     │                                     │              │
 │     │ platform=wechat → WechatClient      │              │
-│     │   connect() → HTTP 长轮询           │              │
+│     │   connect() → HTTP long-polling     │              │
 │     └─────────────────────────────────────┘              │
 │                                                          │
-│  4. 配对验证                                              │
-│     对每个 chatId：                                        │
-│     cloud.getChat(chatId) 验证 bot 有权访问               │
-│     ├─ 验证通过 → 继续                                    │
-│     └─ 验证失败 → 报错退出，提示：                         │
-│        "chatId xxx 无法访问，请先完成配对：                 │
-│         1. 确认 bot 已拉进群/已关注                        │
-│         2. 运行 xabot discover 获取正确的 chatId"         │
+│  4. Pairing verification                                 │
+│     For each chatId:                                     │
+│     cloud.getChat(chatId) verify bot has access          │
+│     ├─ Verification passed → continue                    │
+│     └─ Verification failed → error exit, hint:           │
+│        "chatId xxx inaccessible, please complete         │
+│         pairing first:                                   │
+│         1. Confirm bot has been added to group /         │
+│            followed                                      │
+│         2. Run xabot discover to get the correct         │
+│            chatId"                                       │
 │                                                          │
-│  5. 创建 AcpSession                                       │
+│  5. Create AcpSession                                    │
 │     AcpSession.connect()                                 │
 │     └─ stdin/stdout ←→ ACP SDK                           │
 │                                                          │
-│  6. 创建 Bridge(cloud, acp, router)                       │
-│     bridge.run() ──→ 进入消息循环                          │
+│  6. Create Bridge(cloud, acp, router)                    │
+│     bridge.run() ──→ enter message loop                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 3. 云端 → Agent 消息时序
+## 3. Cloud → Agent Message Sequence
 
 ```
-飞书/微信                        xabot                          下游 Agent
+Feishu/WeChat                    xabot                      Downstream Agent
     │                               │                               │
-    ├─ 用户发消息 ──────────────────→│                               │
+    ├─ User sends message ─────────→│                               │
     │                               │                               │
     │                    PlatformClient.messages()                   │
-    │                    收到 Message { chatId, content }            │
+    │                    Received Message { chatId, content }        │
     │                               │                               │
     │                    router.resolve(chatId)                      │
-    │                    └─ 不匹配 → 丢弃                            │
-    │                    └─ 匹配 → agentId                          │
+    │                    └─ No match → discard                       │
+    │                    └─ Match → agentId                          │
     │                               │                               │
     │                    acpSession.getOrCreateSession(chatId)       │
-    │                    └─ 已有 → 复用 SessionId                    │
-    │                    └─ 没有 → 创建新 session                    │
+    │                    └─ Exists → reuse SessionId                 │
+    │                    └─ Not found → create new session           │
     │                               │                               │
     │                    acpSession.prompt(sessionId, content)       │
     │                               ├──────────────────────────────→│
     │                               │                               │
 ```
 
-## 4. Agent → 云端 消息时序
+## 4. Agent → Cloud Message Sequence
 
 ```
-飞书/微信                        xabot                          下游 Agent
+Feishu/WeChat                    xabot                      Downstream Agent
     │                               │                               │
     │                               │←── ACP notification ──────────┤
     │                               │    { sessionId, content }     │
     │                               │                               │
     │                    router.chats(agentId)                       │
-    │                    └─ 返回 chatId[]                            │
+    │                    └─ return chatId[]                          │
     │                               │                               │
-    │                    对每个 chatId：                              │
+    │                    For each chatId:                            │
     │                    cloud.send(chatId, content)                 │
     │                               │                               │
     │←──────────────────────────────┤                               │
     │                               │                               │
 ```
 
-## 5. 权限请求时序
+## 5. Permission Request Sequence
 
 ```
-xabot                           下游 Agent
+xabot                           Downstream Agent
     │                               │
     │←── ACP permission request ────┤
     │    { sessionId, name,         │
     │      options: [allow,deny] }  │
     │                               │
-    │  自动批准 / 交互式审批（待定）   │
+    │  Auto-approve / interactive approval (TBD)                   │
     │                               │
     │── permission response ───────→│
     │                               │
 ```
 
-## 6. 组件关系图
+## 6. Component Relationship Diagram
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -139,7 +148,8 @@ xabot                           下游 Agent
 │                                                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
 │  │  schema  │  │  Router  │  │ AcpHandler│               │
-│  │  (zod)   │  │ (路由表) │  │ (通知队列)│               │
+│  │  (zod)   │  │ (routing │  │ (notify  │               │
+│  │          │  │  table)  │  │  queue)  │               │
 │  └──────────┘  └────┬─────┘  └──────────┘               │
 │                     │                                    │
 │  ┌──────────────────┼──────────────────────┐             │
@@ -156,7 +166,8 @@ xabot                           下游 Agent
 │  │                                        │             │
 │  │  ┌─────────────┐                      │             │
 │  │  │ WechatClient│                      │             │
-│  │  │ (长轮询)     │                      │             │
+│  │  │ (long-      │                      │             │
+│  │  │  polling)   │                      │             │
 │  │  └─────────────┘                      │             │
 │  └───────────────────────────────────────┘             │
 └──────────────────────────────────────────────────────────┘

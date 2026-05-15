@@ -41,7 +41,7 @@ describe('send', () => {
 
     await send(client, 'test', { chatId: channelId('och_abc'), writer: (chunk) => output.push(chunk) });
 
-    expect(output[0]).toMatch(/已发送/);
+    expect(output[0]).toMatch(/Message sent/);
     expect(output[0]).toMatch(/och_abc/);
     expect(output[0]).toMatch(/mock-id/);
   });
@@ -58,8 +58,8 @@ describe('send', () => {
   it('handles multi-word messages', async () => {
     const client = mockClient();
 
-    await send(client, '你好 世界 123', { chatId: channelId('och_multi') });
+    await send(client, 'Hello World 123', { chatId: channelId('och_multi') });
 
-    expect(client.sent[0]!.text).toBe('你好 世界 123');
+    expect(client.sent[0]!.text).toBe('Hello World 123');
   });
 });

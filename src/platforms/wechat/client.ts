@@ -128,7 +128,7 @@ export class WechatClient implements PlatformClient {
         );
 
         if (!res.ok) {
-          // 401 特殊处理：刷新 token，不 throw，直接 continue 重试
+          // 401 special handling: refresh token, don't throw, just continue to retry
           if (res.status === 401) {
             try {
               this.accessToken = await this.fetchAccessToken();
@@ -140,11 +140,11 @@ export class WechatClient implements PlatformClient {
             retryDelay = 1000;
             continue;
           }
-          // 不可重试的 4xx（明确客户端错误）
+          // Non-retryable 4xx (explicit client errors)
           if (res.status === 400 || res.status === 403 || res.status === 404) {
-            break; // 退出 while，不是 throw
+            break; // Exit while loop, not a throw
           }
-          // 其他所有错误（含 5xx + 可重试 4xx 如 429/408/502）throw 进 back-off 重试
+          // All other errors (including 5xx + retryable 4xx like 429/408/502) throw for back-off retry
           throw XabotError.platform(`WechatClient poll error: HTTP ${res.status}`);
         }
 

@@ -1,68 +1,68 @@
-# xabot — TypeScript 版核心方案设计
+# xabot — TypeScript Core Design Document
 
-> 状态：已迁移至 XACPP
-> 创建时间：2026-04-23 15:09
-> 前身：~/projects/xabot-rs（Rust 版）
+> Status: Migrated to XACPP
+> Created: 2026-04-23 15:09
+> Predecessor: ~/projects/xabot-rs (Rust version)
 
 ---
 
-## 一、定位
+## 1. Overview
 
-xabot 是下游 Agent 与云端 IM 之间的桥梁。通过 XACPP 协议连接 Agent，通过平台 SDK 连接云端（飞书/微信/Discord 等），实现双向消息路由。
+xabot is the bridge between downstream Agents and cloud IM. Connects to Agents via XACPP protocol and to cloud platforms (Feishu/WeChat/Discord etc.) via platform SDKs, enabling bidirectional message routing.
 
 ```
-云端 IM ←→ xabot ←→ 下游 Agent（XACPP）
+Cloud IM ←→ xabot ←→ Downstream Agent (XACPP)
 ```
 
-## 二、核心依赖
+## 2. Core Dependencies
 
-| 依赖 | 版本 | 用途 |
-|------|------|------|
-| `xacpp` | ^0.3.1 | XACPP 协议实现，连接下游 Agent |
-| `@larksuite/node-sdk` | latest | 飞书官方 SDK，WebSocket 长连接 + REST API |
-| `zod` | latest | CLI 参数校验 |
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| `xacpp` | ^0.3.1 | XACPP protocol implementation, connects downstream Agent |
+| `@larksuite/node-sdk` | latest | Feishu official SDK, WebSocket long connection + REST API |
+| `zod` | latest | CLI argument validation |
 
-## 三、项目结构
+## 3. Project Structure
 
 ```
 xabot/
 ├── package.json
 ├── tsconfig.json
 ├── src/
-│   ├── index.ts              # 公共入口
+│   ├── index.ts              # Public entry point
 │   ├── config/
-│   │   └── schema.ts         # CLI 参数 schema（zod 校验，不持久化）
+│   │   └── schema.ts         # CLI argument schema (zod validation, no persistence)
 │   ├── core/
-│   │   ├── types.ts          # 标准消息类型（Message, ChannelId, UserId）
-│   │   ├── client.ts         # 平台 Client 接口
-│   │   ├── error.ts          # 结构化错误类型
-│   │   └── pairing.ts        # 配对码流程
+│   │   ├── types.ts          # Standard message types (Message, ChannelId, UserId)
+│   │   ├── client.ts         # Platform Client interface
+│   │   ├── error.ts          # Structured error types
+│   │   └── pairing.ts        # Pairing code flow
 │   ├── xacpp/
-│   │   ├── establish-handler.ts  # XACPP EstablishHandler 实现
-│   │   └── session-handler.ts    # XACPP SessionHandler 实现
+│   │   ├── establish-handler.ts  # XACPP EstablishHandler implementation
+│   │   └── session-handler.ts    # XACPP SessionHandler implementation
 │   ├── platforms/
 │   │   ├── feishu/
-│   │   │   ├── client.ts     # 飞书 Client 实现
-│   │   │   └── message.ts    # 飞书消息 ↔ 标准消息转换
+│   │   │   ├── client.ts     # Feishu Client implementation
+│   │   │   └── message.ts    # Feishu message ↔ standard message conversion
 │   │   └── wechat/
-│   │       ├── client.ts     # 微信 Client 实现
-│   │       └── message.ts    # 微信消息 ↔ 标准消息转换
+│   │       ├── client.ts     # WeChat Client implementation
+│   │       └── message.ts    # WeChat message ↔ standard message conversion
 │   ├── bridge/
-│   │   └── index.ts          # Bridge：云端 ↔ XACPP 消息路由
+│   │   └── index.ts          # Bridge: cloud ↔ XACPP message routing
 │   └── cli/
-│       ├── index.ts          # CLI 入口（commander）
-│       ├── discover.ts       # discover 子命令
-│       ├── listen.ts         # listen 子命令
-│       ├── send.ts           # send 子命令
-│       ├── health.ts         # health 子命令
-│       └── run.ts            # run 子命令（Bridge 模式）
+│       ├── index.ts          # CLI entry point (commander)
+│       ├── discover.ts       # discover subcommand
+│       ├── listen.ts         # listen subcommand
+│       ├── send.ts           # send subcommand
+│       ├── health.ts         # health subcommand
+│       └── run.ts            # run subcommand (Bridge mode)
 ```
 
-**关键：xabot 不持久化任何配置。** 所有配置（凭据、chat_ids）由下游 Agent 启动时通过 CLI 参数传入。
+**Key: xabot does not persist any configuration.** All config (credentials, chat_ids) are passed via CLI arguments when the downstream Agent starts.
 
-## 四、核心接口设计
+## 4. Core Interface Design
 
-### 4.1 平台 Client 接口
+### 4.1 Platform Client Interface
 
 ```typescript
 interface PlatformClient {
@@ -91,51 +91,51 @@ class Bridge {
 }
 ```
 
-### 4.3 XACPP 协议层
+### 4.3 XACPP Protocol Layer
 
 ```
-Transport  帧层：JSONL envelope 编解码 + request-response id 关联
-  └─ Peer   协议端点：状态机 + establish/session 路由
-       └─ Session  逻辑会话：establish 后产生，持有 transport 引用
-            └─ Activity  活动上下文：与 chatId 一一对应
-                 └─ Event  活动内事件：通过 activity 字段路由
+Transport  Frame layer: JSONL envelope encode/decode + request-response ID correlation
+  └─ Peer   Protocol endpoint: state machine + establish/session routing
+       └─ Session  Logical session: created after establish, holds transport reference
+            └─ Activity  Activity context: one-to-one mapped with chatId
+                 └─ Event  In-activity event: routed via activity field
 ```
 
-- xabot 是 XACPP Responder（被动接受 establish 和事件）
-- 下游 Agent 是 Initiator（主动发起 establish）
+- xabot is the XACPP Responder (passively accepts establish and events)
+- Downstream Agent is the Initiator (actively initiates establish)
 
-## 五、通信模式
+## 5. Communication Modes
 
-| 平台 | 模式 | 端口需求 |
-|------|------|---------|
-| 飞书 | WebSocket 长连接（SDK 内置） | 无 |
-| 微信 | HTTP 长轮询 | 无 |
+| Platform | Mode | Port Requirements |
+|----------|------|------------------|
+| Feishu | WebSocket long connection (built-in SDK) | None |
+| WeChat | HTTP long-polling | None |
 
-飞书和微信统一免端口。
+Both Feishu and WeChat require no open ports.
 
-## 六、完整时序
+## 6. Full Sequence
 
-### 启动
-
-```
-下游 Agent 调用：xabot run --platform feishu --app-id X --app-secret Y --chat-ids a,b,c
-├─ 所有配置通过 CLI 参数传入，xabot 不持久化任何配置
-├─ 平台 Client.connect()（飞书 WebSocket / 微信长轮询）
-├─ XacppPeer.connect()（stdin/stdout JSONL）
-├─ 等待下游 Agent establish → 获得 Session → 注入 Bridge
-└─ Bridge.run() → 云端消息循环
-```
-
-### 消息循环
+### Startup
 
 ```
-云端消息 → chatId → 查找 activityId
-├─ 不存在 → session.requestCommand({ new_activity }) → 创建映射
-└─ session.requestCommand({ invoke_activity }) → 转发到 Agent
+Downstream Agent call: xabot run --platform feishu --app-id X --app-secret Y --chat-ids a,b,c
+├─ All config passed via CLI arguments, xabot does not persist any config
+├─ Platform Client.connect() (Feishu WebSocket / WeChat long-polling)
+├─ XacppPeer.connect() (stdin/stdout JSONL)
+├─ Wait for downstream Agent establish → obtain Session → inject Bridge
+└─ Bridge.run() → cloud message loop
+```
 
-Agent 事件 → activity → 查找 chatId
+### Message Loop
+
+```
+Cloud message → chatId → find activityId
+├─ Not exists → session.requestCommand({ new_activity }) → create mapping
+└─ session.requestCommand({ invoke_activity }) → forward to Agent
+
+Agent event → activity → find chatId
 ├─ content_delta/complete → cloud.send()
 ├─ notify → cloud.send()
-├─ action_request → cloud.send() → 阻塞等待云端反馈 → 返回
-└─ info/warn/error → 日志输出
+├─ action_request → cloud.send() → block waiting for cloud response → return
+└─ info/warn/error → log output
 ```

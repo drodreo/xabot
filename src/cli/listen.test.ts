@@ -159,7 +159,7 @@ describe('listen', () => {
     });
     // Only the prompt line, no messages
     const combined = output.join('');
-    expect(combined).toContain('输入消息并回车发送');
+    expect(combined).toContain('Type a message and press Enter');
     expect(combined).not.toContain('⬇');
   });
 
@@ -214,7 +214,7 @@ describe('listen', () => {
     resolve();
 
     const combined = output.join('');
-    expect(combined).toContain('发送失败');
+    expect(combined).toContain('Send failed');
     expect(combined).toContain('network down');
   });
 });

@@ -70,7 +70,7 @@ describe('discover', () => {
     });
 
     expect(result).toBe(chat);
-    expect(stderr.join('')).toMatch(/配对码：TESTAB/);
+    expect(stderr.join('')).toMatch(/pairing code.*TESTAB/);
     const json = JSON.parse(stdout.join('').trim());
     expect(json).toEqual({ ok: true, chatId: 'chat-alpha' });
   });
@@ -139,8 +139,8 @@ describe('discover', () => {
     ).rejects.toThrow(DiscoverTimeoutError);
 
     const combined = stderr.join('');
-    expect(combined).toMatch(/配对码：OUTCODE/);
-    expect(combined).toMatch(/60 秒内/);
+    expect(combined).toMatch(/pairing code.*OUTCODE/);
+    expect(combined).toMatch(/within 60 seconds/);
   });
 
   it('throws DiscoverTimeoutError when stream ends without any matching message', async () => {

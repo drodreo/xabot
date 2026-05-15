@@ -44,7 +44,7 @@ describe('health', () => {
     await health(healthyClient(), { writer: (chunk) => output.push(chunk) });
     expect(output[0]).toMatch(/✅/);
     expect(output[0]).toMatch(/feishu/);
-    expect(output[0]).toMatch(/连接正常/);
+    expect(output[0]).toMatch(/connection OK/);
   });
 
   it('writes a failure message when healthCheck throws', async () => {

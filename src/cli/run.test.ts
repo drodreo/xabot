@@ -68,8 +68,8 @@ describe('run', () => {
       writer: (chunk) => output.push(chunk),
     });
 
-    expect(output.some((o) => o.includes('Bridge 模式启动'))).toBe(true);
-    expect(output.some((o) => o.includes('Bridge 已关闭'))).toBe(true);
+    expect(output.some((o) => o.includes('Bridge mode started'))).toBe(true);
+    expect(output.some((o) => o.includes('Bridge closed'))).toBe(true);
   });
 
   it('passes correct chatIds in startup message', async () => {
