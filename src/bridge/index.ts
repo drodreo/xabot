@@ -1,147 +1,224 @@
-import type { ChannelId, SessionId } from '../core/types.js';
-import type { AcpSession } from '../acp/session.js';
+import type { ChannelId } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
-import type { Router } from '../core/router.js';
-import type { AgentNotification } from '../acp/handler.js';
+import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart } from 'xacpp';
 
 /**
- * Bridge — bidirectional message loop between cloud platform and ACP agents.
+ * Bridge — bidirectional message loop between cloud platform and XACPP agents.
  *
- * - Cloud → Agent: reads cloud messages, resolves agent via router,
- *   gets/creates a session, and prompts the ACP agent.
- * - Agent → Cloud: reads agent notifications and proactive messages,
- *   resolves the chatId from the sessionId (reverse-mapping for
- *   notifications; uses the chatId directly for proactive messages),
- *   and sends the reply to the cloud.
- *
- * Both loops run concurrently inside run() and are stopped by close().
+ * Cloud → Agent: reads cloud messages, resolves/creates activity,
+ *   sends invoke_activity command via session.
+ * Agent → Cloud: reads agent events, routes content_delta/complete/notify
+ *   back to the corresponding chatId.
  */
 export class Bridge {
-  readonly #cloud: PlatformClient;
-  readonly #acp: AcpSession;
-  readonly #router: Router;
+  private readonly cloud: PlatformClient;
+  private readonly transport: XacppTransport;
 
-  /** sessionId → chatId reverse mapping, maintained as sessions are created. */
-  readonly #sessionToChat = new Map<SessionId, ChannelId>();
+  /** chatId → activityId */
+  private readonly chatToActivity = new Map<ChannelId, string>();
+  /** activityId → chatId */
+  private readonly activityToChat = new Map<string, ChannelId>();
 
-  #abortCtrl = new AbortController();
-  #closed = false;
+  /** establish 后获得，用于主动发 command/event */
+  private session: XacppSession | null = null;
 
-  constructor(cloud: PlatformClient, acp: AcpSession, router: Router) {
-    this.#cloud = cloud;
-    this.#acp = acp;
-    this.#router = router;
+  /** 阻塞等待的 pending response：requestId → resolve */
+  private readonly pendingResponses = new Map<string, (response: XacppResponse) => void>();
+
+  private abortCtrl = new AbortController();
+  private closed = false;
+
+  constructor(cloud: PlatformClient, transport: XacppTransport) {
+    this.cloud = cloud;
+    this.transport = transport;
   }
 
-  /**
-   * Run the bidirectional message loop.
-   * Starts three concurrent async loops:
-   *   1. cloudMessagesLoop — forwards cloud messages to ACP agents.
-   *   2. agentNotificationsLoop — forwards session notifications back to the cloud.
-   *   3. agentProactiveLoop — forwards proactive (send_message) messages to the cloud.
-   *
-   * All loops abort when close() is called or the instance is destroyed.
-   */
-  async run(): Promise<void> {
-    if (this.#closed) return;
+  /** establish 成功后调用，注入 session 引用。 */
+  setSession(session: XacppSession): void {
+    this.session = session;
+  }
 
-    const { signal } = this.#abortCtrl;
+  /** 处理下游 Agent 发来的 Command（通过 XabotSessionHandler.onCommand 转发）。 */
+  async handleCommand(_command: XacppCommand): Promise<XacppResponse> {
+    // xabot 是 Responder，暂不主动处理 inbound command
+    return { kind: 'acknowledge' };
+  }
 
-    // Cloud → Agent loop
-    const cloudMessagesLoop = (async () => {
-      try {
-        for await (const msg of this.#cloud.messages()) {
-          if (signal.aborted) break;
+  /** 处理下游 Agent 发来的 Event（通过 XabotSessionHandler.onEvent 转发）。 */
+  async handleEvent(activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
+    const chatId = this.activityToChat.get(activityId);
 
-          const agentId = this.#router.resolve(msg.chatId);
-          if (!agentId) continue; // no agent registered for this chatId — discard
+    switch (event.event.type) {
+      case 'content_delta':
+      case 'content_part': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const payload = event.event.payload as ContentPart;
+        if (payload.type === 'text') {
+          await this.cloud.send(chatId, { type: 'text', text: payload.text });
+        } else if (payload.type === 'image') {
+          await this.cloud.send(chatId, { type: 'image', url: payload.source.remoteUrl });
+        } else {
+          await this.cloud.send(chatId, { type: 'text', text: `[${payload.type}]` });
+        }
+        return { kind: 'acknowledge' };
+      }
 
-          const sessionId = await this.#acp.getOrCreateSession(msg.chatId);
-
-          // Build reverse mapping so we can route replies back
-          this.#sessionToChat.set(sessionId, msg.chatId);
-
-          let text: string;
-          if (msg.content.type === 'text') {
-            text = msg.content.text;
-          } else if (msg.content.type === 'image') {
-            text = `[image: ${msg.content.url}]`;
+      case 'complete': {
+        if (!chatId) return { kind: 'acknowledge' };
+        for (const part of event.event.assistantReply) {
+          if (part.type === 'text') {
+            await this.cloud.send(chatId, { type: 'text', text: part.text });
+          } else if (part.type === 'image') {
+            await this.cloud.send(chatId, { type: 'image', url: part.source.remoteUrl });
           } else {
-            text = `[file: ${(msg.content as { name: string }).name}]`;
-          }
-          await this.#acp.prompt(sessionId, [{ type: 'text', text }]);
-        }
-      } catch (err) {
-        console.error('[Bridge]', err);
-        // Abort the other loops so all exit together
-        this.#abortCtrl.abort();
-      }
-    })();
-
-    // Agent → Cloud loop (session notifications)
-    const agentNotificationsLoop = (async () => {
-      // Track all session IDs seen during this notifications loop so we can clean
-      // them ALL up when the loop ends — not just the last one (which was the
-      // original memory leak).
-      const seenSessions = new Set<SessionId>();
-      try {
-        for await (const notif of this.#acp.notifications()) {
-          if (signal.aborted) break;
-
-          const chatId = this.#sessionToChat.get(notif.sessionId);
-          if (!chatId) continue; // no known chat for this session — discard
-
-          seenSessions.add(notif.sessionId);
-          try {
-            await this.#cloud.send(chatId, { type: 'text', text: notif.content });
-          } catch {
-            // send error — continue processing other notifications
+            await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
           }
         }
-      } catch (err) {
-        console.error('[Bridge] notifications loop error:', err);
-        this.#abortCtrl.abort();
-      } finally {
-        // Clean up ALL seen session mappings when the loop exits — fixing the
-        // original leak where only lastNotifSessionId was cleaned up.
-        for (const sid of seenSessions) {
-          this.#sessionToChat.delete(sid);
-        }
+        return { kind: 'acknowledge' };
       }
-    })();
 
-    // Agent → Cloud loop (proactive / send_message)
-    // These messages carry their own chatId and do not require session mapping.
-    const agentProactiveLoop = (async () => {
-      try {
-        for await (const proactive of this.#acp.proactiveMessages()) {
-          if (signal.aborted) break;
-
-          const chatId = proactive.chatId;
-          try {
-            await this.#cloud.send(chatId, { type: 'text', text: proactive.content });
-          } catch {
-            // send error — continue processing other messages
-          }
-        }
-      } catch (err) {
-        console.error('[Bridge] proactive loop error:', err);
-        this.#abortCtrl.abort();
+      case 'notify': {
+        if (!chatId) return { kind: 'acknowledge' };
+        await this.cloud.send(chatId, { type: 'text', text: event.event.message });
+        return { kind: 'acknowledge' };
       }
-    })();
 
-    await Promise.all([cloudMessagesLoop, agentNotificationsLoop, agentProactiveLoop]);
+      case 'action_request': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const pendingPromise = this.waitForResponse(event.event.requestId);
+        try {
+          const userMessage = `[授权请求] ${event.event.description}\n工具: ${event.event.toolName}\n请回复 approve 或 reject`;
+          await this.cloud.send(chatId, { type: 'text', text: userMessage });
+        } catch {
+          this.pendingResponses.delete(event.event.requestId);
+          return { kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' };
+        }
+        return pendingPromise;
+      }
+
+      case 'question': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const pendingPromise = this.waitForResponse(event.event.requestId);
+        try {
+          const questionMsg = `[提问] ${event.event.question}\n选项: ${event.event.options.join(', ')}`;
+          await this.cloud.send(chatId, { type: 'text', text: questionMsg });
+        } catch {
+          this.pendingResponses.delete(event.event.requestId);
+          return { kind: 'error', code: 'send_failed', message: 'failed to forward question to cloud' };
+        }
+        return pendingPromise;
+      }
+
+      case 'sensitive_info_operation': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const pendingPromise = this.waitForResponse(event.event.requestId);
+        try {
+          const opMsg = `[敏感信息操作] ${event.event.operation.type}`;
+          await this.cloud.send(chatId, { type: 'text', text: opMsg });
+        } catch {
+          this.pendingResponses.delete(event.event.requestId);
+          return { kind: 'error', code: 'send_failed', message: 'failed to forward sensitive_info_operation to cloud' };
+        }
+        return pendingPromise;
+      }
+
+      case 'info':
+      case 'warn':
+      case 'error': {
+        return { kind: 'acknowledge' };
+      }
+
+      default: {
+        return { kind: 'acknowledge' };
+      }
+    }
   }
 
-  /**
-   * Stop the message loop.
-   * Aborts all loops, then closes the underlying cloud and ACP connections.
-   */
+  /** 解除阻塞等待的 action/question/sensitive_info_operation。 */
+  resolvePending(requestId: string, response: XacppResponse): void {
+    const resolve = this.pendingResponses.get(requestId);
+    if (resolve) {
+      this.pendingResponses.delete(requestId);
+      resolve(response);
+    }
+  }
+
+  /** 云端消息循环：PlatformClient.messages() → session.requestCommand */
+  async run(): Promise<void> {
+    if (this.closed) return;
+
+    const { signal } = this.abortCtrl;
+
+    try {
+      for await (const msg of this.cloud.messages()) {
+        if (signal.aborted) break;
+        if (!this.session) {
+          continue;
+        }
+
+        const chatId = msg.chatId;
+
+        // 查找或创建 activityId
+        let activityId = this.chatToActivity.get(chatId);
+        if (!activityId) {
+          const createResponse = await this.session.requestCommand({
+            new_activity: { title: null },
+          });
+          if (createResponse.kind === 'activity_created') {
+            activityId = createResponse.activity;
+          } else {
+            continue;
+          }
+          this.chatToActivity.set(chatId, activityId);
+          this.activityToChat.set(activityId, chatId);
+        }
+
+        // 构造 ContentPart
+        const parts: ContentPart[] = [];
+        if (msg.content.type === 'text') {
+          parts.push({ type: 'text', text: msg.content.text });
+        } else if (msg.content.type === 'image') {
+          parts.push({
+            type: 'image',
+            source: { remoteUrl: msg.content.url, localUri: '', mimeType: 'image/*', sizeBytes: 0 },
+          });
+        } else if (msg.content.type === 'file') {
+          parts.push({
+            type: 'text',
+            text: `[file: ${(msg.content as { name: string }).name}]`,
+          });
+        }
+
+        await this.session.requestCommand({
+          invoke_activity: { activity: activityId, messages: parts },
+        });
+      }
+    } catch (err) {
+      console.error('[Bridge] cloud message loop error:', err);
+      this.abortCtrl.abort();
+    }
+  }
+
   async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#abortCtrl.abort();
-    this.#sessionToChat.clear();
-    await Promise.all([this.#cloud.close(), this.#acp.close()]);
+    if (this.closed) return;
+    this.closed = true;
+    this.abortCtrl.abort();
+    this.chatToActivity.clear();
+    this.activityToChat.clear();
+    for (const [, resolve] of this.pendingResponses) {
+      resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
+    }
+    this.pendingResponses.clear();
+    await Promise.all([
+      this.cloud.close(),
+      this.transport.disconnect(),
+    ]);
+  }
+
+  /** 阻塞等待指定 requestId 的 response。 */
+  private waitForResponse(requestId: string): Promise<XacppResponse> {
+    return new Promise<XacppResponse>((resolve) => {
+      this.pendingResponses.set(requestId, resolve);
+    });
   }
 }

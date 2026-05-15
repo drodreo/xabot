@@ -6,7 +6,7 @@
  *   - Reads lines from stdin and sends them as text to a fixed chatId.
  *
  * Meant for debugging — have a live conversation with a cloud chat
- * without needing ACP / agent infrastructure.
+ * without needing agent infrastructure.
  */
 
 import type { PlatformClient } from '../core/client.js';

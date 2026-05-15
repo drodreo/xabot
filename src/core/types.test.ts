@@ -1,8 +1,8 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
 import {
-  messageId, channelId, userId, sessionId, agentId,
+  messageId, channelId, userId, sessionId,
   StreamCapability,
-  type MessageId, type ChannelId, type UserId, type SessionId, type AgentId,
+  type MessageId, type ChannelId, type UserId, type SessionId,
 } from './types.js';
 
 // -------------------------------------------------------------------------- //
@@ -34,18 +34,11 @@ describe('brand constructors', () => {
     expect(id).toBe('session-001');
   });
 
-  it('agentId creates an AgentId', () => {
-    const id = agentId('agent-alpha');
-    expectTypeOf(id).toEqualTypeOf<AgentId>();
-    expect(id).toBe('agent-alpha');
-  });
-
   it('accepts arbitrary strings including empty', () => {
     expect(messageId('')).toBe('');
     expect(channelId('')).toBe('');
     expect(userId('')).toBe('');
     expect(sessionId('')).toBe('');
-    expect(agentId('')).toBe('');
   });
 });
 
@@ -157,22 +150,19 @@ describe('type brand isolation (compile-time)', () => {
     expect(true).toBe(true); // type-only block
   });
 
-  it('all five branded types are distinct', () => {
+  it('all four branded types are distinct', () => {
     const v1: MessageId = messageId('v1');
     const v2: ChannelId = channelId('v2');
     const v3: UserId = userId('v3');
     const v4: SessionId = sessionId('v4');
-    const v5: AgentId = agentId('v5');
     // Assign to themselves — this passes only when brands are intact
     const _check1: MessageId = v1;
     const _check2: ChannelId = v2;
     const _check3: UserId = v3;
     const _check4: SessionId = v4;
-    const _check5: AgentId = v5;
     expect(_check1).toBe('v1');
     expect(_check2).toBe('v2');
     expect(_check3).toBe('v3');
     expect(_check4).toBe('v4');
-    expect(_check5).toBe('v5');
   });
 });

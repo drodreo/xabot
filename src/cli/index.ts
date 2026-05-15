@@ -11,7 +11,7 @@
  *   listen    — Listen for incoming cloud messages and print to stdout
  *   send      — Send a text message to a specified chatId
  *   health    — Verify credentials and connection health
- *   run       — Start Bridge mode (cloud ↔ ACP bidirectional loop)
+ *   run       — Start Bridge mode (cloud ↔ XACPP bidirectional loop)
  */
 
 import { Command, InvalidArgumentError, Option } from 'commander';
@@ -23,9 +23,10 @@ import { listen } from './listen.js';
 import { send } from './send.js';
 import { health } from './health.js';
 import { run } from './run.js';
-import { AcpSession } from '../acp/session.js';
-import { Router } from '../core/router.js';
-import { agentId, channelId } from '../core/types.js';
+import { channelId } from '../core/types.js';
+import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
+import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
+import { Bridge } from '../bridge/index.js';
 
 // ---------------------------------------------------------------------------
 // Platform client factory
@@ -103,7 +104,7 @@ Subcommands:
   xabot listen   --platform feishu --app-id cli --app-secret secret
   xabot send     --platform wechat --app-id cli --app-secret secret och_xxx "Hello!"
   xabot health   --platform feishu --app-id cli --app-secret secret
-  xabot run      --platform feishu --app-id cli --app-secret secret --agent-id agent1 --chat-ids och_1,och_2`,
+  xabot run      --platform feishu --app-id cli --app-secret secret --chat-ids och_1,och_2`,
   );
 
 // ---------------------------------------------------------------------------
@@ -185,7 +186,6 @@ addGlobalOptions(program.command('health'))
 // ---------------------------------------------------------------------------
 
 addGlobalOptions(program.command('run'))
-  .requiredOption('--agent-id <id>', 'Agent ID')
   .requiredOption('--chat-ids <ids>', 'Comma-separated chat IDs')
   .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
   .action(async (options: Record<string, unknown>) => {
@@ -196,10 +196,22 @@ addGlobalOptions(program.command('run'))
       options.logLevel as string | undefined,
     );
     await cloud.connect();
-    const acp = await AcpSession.connect();
-    const router = new Router();
-    await run(cloud, acp, router, {
-      agentId: agentId(options.agentId as string),
+
+    const transport = new StdioTransport(process.stdout, process.stdin);
+    const establishHandler = new XabotEstablishHandler();
+    const peer = new XacppPeer(transport, establishHandler);
+
+    const bridge = new Bridge(cloud, transport);
+    establishHandler.setBridge(bridge);
+
+    establishHandler.onEstablished((_t, sessionId, credentials) => {
+      const session = new XacppSession(transport, sessionId, credentials);
+      bridge.setSession(session);
+    });
+
+    await peer.connect();
+
+    await run(bridge, peer, {
       chatIds: (options.chatIds as string).split(',').map(channelId),
     });
   });

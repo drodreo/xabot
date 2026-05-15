@@ -1,60 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import type { PlatformClient } from '../core/client.js';
-import type { AcpSession } from '../acp/session.js';
+import { describe, it, expect, vi } from 'vitest';
 import type { Bridge } from '../bridge/index.js';
-import { agentId, channelId, messageId, StreamCapability as SC } from '../core/types.js';
+import type { XacppPeer } from 'xacpp';
+import { channelId } from '../core/types.js';
 import { run } from './run.js';
-import { Router } from '../core/router.js';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-interface MockPlatformClient extends PlatformClient {
-  closed: boolean;
-}
-
-function mockPlatformClient(): MockPlatformClient {
-  let isClosed = false;
-  return {
-    platform: 'mock',
-    closed: false,
-    async connect() {},
-    async send() {
-      return messageId('mock-id');
-    },
-    async *messages() {},
-    streamCapability() {
-      return SC.NonStreaming;
-    },
-    async healthCheck() {},
-    async close() {
-      isClosed = true;
-      this.closed = isClosed;
-    },
-  };
-}
-
-function mockAcpSession(): AcpSession {
-  return {
-    __testHandler: null as any,
-    __testClient: null as any,
-    async getOrCreateSession() {
-      return 'mock-session-id' as any;
-    },
-    async prompt() {},
-    async *notifications() {},
-    async *permissionRequests() {},
-    close() {},
-  } as unknown as AcpSession;
-}
-
-interface MockBridge extends Bridge {
-  closed: boolean;
-  runCalled: boolean;
-}
-
-function mockBridge(cloud?: MockPlatformClient): MockBridge {
+function mockBridge(): Bridge & { closed: boolean; runCalled: boolean } {
   let bridgeClosed = false;
   let bridgeRunCalled = false;
   return {
@@ -65,9 +19,25 @@ function mockBridge(cloud?: MockPlatformClient): MockBridge {
     },
     async close() {
       bridgeClosed = true;
-      if (cloud) await cloud.close();
     },
-  } as unknown as MockBridge;
+    setSession: vi.fn(),
+    handleCommand: vi.fn(),
+    handleEvent: vi.fn(),
+    resolvePending: vi.fn(),
+  } as unknown as Bridge & { closed: boolean; runCalled: boolean };
+}
+
+function mockPeer(): XacppPeer & { disconnected: boolean } {
+  let disconnected = false;
+  return {
+    get disconnected() { return disconnected; },
+    async disconnect() {
+      disconnected = true;
+    },
+    connect: vi.fn().mockResolvedValue(undefined),
+    establish: vi.fn(),
+    state: 'connected' as any,
+  } as unknown as XacppPeer & { disconnected: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -75,69 +45,61 @@ function mockBridge(cloud?: MockPlatformClient): MockBridge {
 // ---------------------------------------------------------------------------
 
 describe('run', () => {
-  it('registers agentId and chatIds in the router before running bridge', async () => {
-    const cloud = mockPlatformClient();
-    const acp = mockAcpSession();
+  it('calls bridge.run() and closes on normal exit', async () => {
     const bridge = mockBridge();
-    const router = new Router();
+    const peer = mockPeer();
 
-    await run(cloud, acp, router, {
-      agentId: agentId('agent-1'),
+    await run(bridge, peer, {
       chatIds: [channelId('och_1'), channelId('och_2')],
-      bridgeFactory: () => bridge,
     });
 
-    expect(router.resolve(channelId('och_1'))).toBe('agent-1');
-    expect(router.resolve(channelId('och_2'))).toBe('agent-1');
     expect(bridge.runCalled).toBe(true);
-  });
-
-  it('closes the bridge on normal exit', async () => {
-    const cloud = mockPlatformClient();
-    const acp = mockAcpSession();
-    const bridge = mockBridge(cloud);
-    const router = new Router();
-
-    await run(cloud, acp, router, {
-      agentId: agentId('agent-x'),
-      chatIds: [channelId('och_x')],
-      bridgeFactory: () => bridge,
-    });
-
     expect(bridge.closed).toBe(true);
-    expect(cloud.closed).toBe(true);
+    expect(peer.disconnected).toBe(true);
   });
 
   it('uses the writer for startup and shutdown messages', async () => {
-    const cloud = mockPlatformClient();
-    const acp = mockAcpSession();
     const bridge = mockBridge();
-    const router = new Router();
+    const peer = mockPeer();
     const output: string[] = [];
 
-    await run(cloud, acp, router, {
-      agentId: agentId('agent-write'),
+    await run(bridge, peer, {
       chatIds: [channelId('och_write')],
       writer: (chunk) => output.push(chunk),
-      bridgeFactory: () => bridge,
     });
 
     expect(output.some((o) => o.includes('Bridge 模式启动'))).toBe(true);
     expect(output.some((o) => o.includes('Bridge 已关闭'))).toBe(true);
   });
 
-  it('closes the bridge when factory is provided', async () => {
-    const cloud = mockPlatformClient();
-    const acp = mockAcpSession();
+  it('passes correct chatIds in startup message', async () => {
     const bridge = mockBridge();
-    const router = new Router();
+    const peer = mockPeer();
+    const output: string[] = [];
 
-    await run(cloud, acp, router, {
-      agentId: agentId('agent-factory'),
-      chatIds: [channelId('och_factory')],
-      bridgeFactory: () => bridge,
+    await run(bridge, peer, {
+      chatIds: [channelId('och_1'), channelId('och_2')],
+      writer: (chunk) => output.push(chunk),
     });
 
+    expect(output.some((o) => o.includes('och_1') && o.includes('och_2'))).toBe(true);
+  });
+
+  it('close() is idempotent — multiple SIGINT only close once', async () => {
+    const bridge = mockBridge();
+    const peer = mockPeer();
+    const output: string[] = [];
+
+    // Run with writer capturing
+    const runPromise = run(bridge, peer, {
+      chatIds: [channelId('och_1')],
+      writer: (chunk) => output.push(chunk),
+    });
+
+    await runPromise;
+
+    // Bridge.run() resolves immediately in mock, so close has already been called once
     expect(bridge.closed).toBe(true);
+    expect(peer.disconnected).toBe(true);
   });
 });

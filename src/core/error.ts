@@ -15,10 +15,6 @@ export class XabotError extends Error {
     return new XabotError(msg, 'AUTH');
   }
 
-  static acp(msg: string): XabotError {
-    return new XabotError(msg, 'ACP');
-  }
-
   static config(msg: string): XabotError {
     return new XabotError(msg, 'CONFIG');
   }

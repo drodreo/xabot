@@ -3,60 +3,39 @@
  *
  * Starts the full Bridge mode:
  *   - Connects the cloud PlatformClient.
- *   - Connects the ACP session over stdin/stdout.
- *   - Registers agentId → chatIds in the Router.
+ *   - Establishes XACPP peer over stdin/stdout.
  *   - Runs the Bridge bidirectional message loop.
  *
  * Handles SIGINT and SIGTERM gracefully, then exits cleanly.
  */
 
-import type { PlatformClient } from '../core/client.js';
-import type { AcpSession } from '../acp/session.js';
+import type { ChannelId } from '../core/types.js';
 import type { Bridge } from '../bridge/index.js';
-import type { AgentId, ChannelId } from '../core/types.js';
-import type { Router } from '../core/router.js';
+import type { XacppPeer } from 'xacpp';
 
 export interface RunOptions {
-  /** agentId registered with the ACP downstream. */
-  agentId: AgentId;
-  /** chatIds this agent owns — used to initialise the Router. */
+  /** chatIds this agent owns. */
   chatIds: ChannelId[];
   /** Output writer — defaults to process.stdout.write. */
   writer?: (chunk: string) => void;
-  /**
-   * Override Bridge construction — intended for testing.
-   * When provided, the caller supplies the Bridge instance directly.
-   */
-  bridgeFactory?: (cloud: PlatformClient, acp: AcpSession, router: Router) => Bridge;
 }
 
 /**
  * Start Bridge mode with graceful shutdown on SIGINT/SIGTERM.
  *
- * @param cloud   - A connected PlatformClient.
- * @param acp    - A connected AcpSession.
- * @param router - A Router with agentId → chatIds already registered.
+ * @param bridge - A Bridge instance wired to cloud and transport.
+ * @param peer   - A connected XacppPeer.
  * @param options
  */
 export async function run(
-  cloud: PlatformClient,
-  acp: AcpSession,
-  router: Router,
+  bridge: Bridge,
+  peer: XacppPeer,
   options: RunOptions,
 ): Promise<void> {
   const {
-    agentId,
     chatIds,
     writer = (chunk: string) => process.stdout.write(chunk),
-    bridgeFactory,
   } = options;
-
-  // Register this agent's chatIds in the router.
-  router.register(agentId, chatIds);
-
-  const bridge = bridgeFactory
-    ? bridgeFactory(cloud, acp, router)
-    : new (await import('../bridge/index.js')).Bridge(cloud, acp, router);
 
   // Track shutdown so we only close once.
   let closed = false;
@@ -65,6 +44,7 @@ export async function run(
     closed = true;
     writer('正在关闭 Bridge...\n');
     await bridge.close();
+    await peer.disconnect();
     writer('Bridge 已关闭，退出。\n');
   };
 
@@ -77,7 +57,7 @@ export async function run(
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
 
-  writer(`Bridge 模式启动，agentId=${agentId}，chatIds=[${chatIds.join(', ')}]\n`);
+  writer(`Bridge 模式启动，chatIds=[${chatIds.join(', ')}]\n`);
 
   await bridge.run();
   // Bridge.run() only resolves when the loops end (or close() was called).

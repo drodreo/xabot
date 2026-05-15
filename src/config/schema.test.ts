@@ -1,120 +1,67 @@
 import { describe, it, expect } from 'vitest';
-import { parseAcpArgs, AcpArgsSchema } from './schema.js';
+import { parseDiscoverArgs } from './schema.js';
 
-describe('parseAcpArgs', () => {
-  it('parses valid args', () => {
-    const args = parseAcpArgs([
+describe('parseDiscoverArgs', () => {
+  it('parses valid args with default timeout', () => {
+    const args = parseDiscoverArgs([
       '--platform', 'feishu',
       '--app-id', 'cli_abc',
       '--app-secret', 'secret123',
-      '--agent-id', 'agent-1',
-      '--chat-ids', 'chat1,chat2',
     ]);
     expect(args.platform).toBe('feishu');
     expect(args.appId).toBe('cli_abc');
     expect(args.appSecret).toBe('secret123');
-    expect(args.agentId).toBe('agent-1');
-    expect(args.chatIds).toEqual(['chat1', 'chat2']);
+    expect(args.timeoutMs).toBe(60000);
+  });
+
+  it('parses valid args with custom timeout', () => {
+    const args = parseDiscoverArgs([
+      '--platform', 'wechat',
+      '--app-id', 'x',
+      '--app-secret', 'y',
+      '--timeout-ms', '5000',
+    ]);
+    expect(args.platform).toBe('wechat');
+    expect(args.timeoutMs).toBe(5000);
   });
 
   it('rejects missing platform', () => {
-    expect(() => parseAcpArgs(['--app-id', 'x', '--app-secret', 'y', '--agent-id', 'z', '--chat-ids', 'a'])).toThrow();
+    expect(() => parseDiscoverArgs(['--app-id', 'x', '--app-secret', 'y'])).toThrow();
   });
 
   it('rejects missing app-id', () => {
-    expect(() => parseAcpArgs([
+    expect(() => parseDiscoverArgs([
       '--platform', 'feishu', '--app-secret', 'y',
-      '--agent-id', 'z', '--chat-ids', 'a',
     ])).toThrow();
   });
 
   it('rejects missing app-secret', () => {
-    expect(() => parseAcpArgs([
+    expect(() => parseDiscoverArgs([
       '--platform', 'feishu', '--app-id', 'x',
-      '--agent-id', 'z', '--chat-ids', 'a',
     ])).toThrow();
   });
 
-  it('rejects missing agent-id', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'feishu', '--app-id', 'x', '--app-secret', 'y',
-      '--chat-ids', 'a',
-    ])).toThrow();
-  });
-
-  it('rejects missing chat-ids', () => {
-    expect(() => parseAcpArgs([
+  it('rejects invalid timeout-ms', () => {
+    expect(() => parseDiscoverArgs([
       '--platform', 'feishu', '--app-id', 'x',
-      '--app-secret', 'y', '--agent-id', 'z',
+      '--app-secret', 'y', '--timeout-ms', 'abc',
     ])).toThrow();
   });
 
-  it('rejects empty chatIds', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'feishu', '--app-id', 'x', '--app-secret', 'y',
-      '--agent-id', 'z', '--chat-ids', '',
-    ])).toThrow();
-  });
-
-  it('accepts wechat platform', () => {
-    const args = parseAcpArgs([
-      '--platform', 'wechat',
-      '--app-id', 'x', '--app-secret', 'y',
-      '--agent-id', 'z', '--chat-ids', 'c1',
-    ]);
-    expect(args.platform).toBe('wechat');
-  });
-
-  it('rejects platform not in feishu or wechat', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'slack',
-      '--app-id', 'x', '--app-secret', 'y',
-      '--agent-id', 'z', '--chat-ids', 'c1',
-    ])).toThrow();
-  });
-
-  it('rejects empty string app-id', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'feishu', '--app-id', '',
-      '--app-secret', 'y', '--agent-id', 'z',
-      '--chat-ids', 'c1',
-    ])).toThrow();
-  });
-
-  it('rejects empty string app-secret', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'feishu', '--app-id', 'x',
-      '--app-secret', '', '--agent-id', 'z',
-      '--chat-ids', 'c1',
-    ])).toThrow();
-  });
-
-  it('rejects empty string agent-id', () => {
-    expect(() => parseAcpArgs([
-      '--platform', 'feishu', '--app-id', 'x',
-      '--app-secret', 'y', '--agent-id', '',
-      '--chat-ids', 'c1',
-    ])).toThrow();
-  });
-
-  // P2-3: unknown flags throw
-  it('throws on unknown flag', () => {
-    expect(() => parseAcpArgs([
+  it('rejects unknown flag', () => {
+    expect(() => parseDiscoverArgs([
       '--platform', 'feishu',
       '--app-id', 'x',
       '--app-secret', 'y',
-      '--agent-id', 'z',
-      '--chat-ids', 'c1',
-      '--unknown-flag', 'oops',
-    ])).toThrow('Unknown flag: --unknown-flag');
+      '--unknown', 'oops',
+    ])).toThrow('Unknown flag: --unknown');
   });
 
-  it('parses multiple comma-separated chat-ids', () => {
-    const args = parseAcpArgs([
-      '--platform', 'feishu', '--app-id', 'x',
-      '--app-secret', 'y', '--agent-id', 'z',
-      '--chat-ids', 'chat1,chat2,chat3',
+  it('accepts wechat platform', () => {
+    const args = parseDiscoverArgs([
+      '--platform', 'wechat',
+      '--app-id', 'x', '--app-secret', 'y',
     ]);
-    expect(args.chatIds).toEqual(['chat1', 'chat2', 'chat3']);
+    expect(args.platform).toBe('wechat');
   });
 });
