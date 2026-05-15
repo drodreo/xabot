@@ -3,60 +3,99 @@ import type { XacppTransport, EstablishHandler, XacppSessionHandler, EstablishDe
 import type { Bridge } from '../bridge/index.js';
 
 /**
- * EstablishHandler implementation for xabot.
+ * Handles the Establish handshake for xabot acting as the Responder.
  *
- * Triggered when the downstream Agent (Initiator) initiates establish.
- * Supports three-step handshake:
- *   1. First connection (credentials === null) → return challenge_required
- *   2. Initiator confirms challenge → onEstablishConfirm creates session
- *   3. Non-first connection (credentials !== null) → create session directly
+ * Flow when !credentials (challenge path):
+ * 1. Initiator generates a challenge and shows it to the user.
+ * 2. User manually sends the challenge to the bot via Feishu.
+ * 3. The cloud message handler calls {@link submitChallenge} with the challenge text and chatId.
+ * 4. When Initiator calls `Establish(null)`, the Responder waits for the challenge to arrive
+ *    (via {@link submitChallenge}), then returns `{ type: 'challenge_required', challenge }`.
+ * 5. Initiator compares the challenge and sends `establish_confirm`.
+ * 6. Responder creates a session with `credentials = chatId` (the chatId from the cloud message
+ *    that contained the challenge).
  */
 export class XabotEstablishHandler implements EstablishHandler {
-  private onSession: ((transport: XacppTransport, sessionId: string, credentials: string | null) => void) | null = null;
+  private onSession: ((transport: XacppTransport, sessionId: string, credentials: string) => void) | null = null;
   private bridge: Bridge | null = null;
   private _lastHandler: XabotSessionHandler | null = null;
-  private pendingChallenge: string | null = null;
 
-  /** Register callback: notify Bridge after successful establish. */
-  onEstablished(callback: (transport: XacppTransport, sessionId: string, credentials: string | null) => void): void {
+  /** Resolver for the Promise returned by onEstablish() when waiting for a challenge. */
+  private challengeResolver: ((result: { challenge: string; chatId: string }) => void) | null = null;
+
+  /** Cached challenge result when submitChallenge() is called before onEstablish() asks for it. */
+  private pendingChallengeResult: { challenge: string; chatId: string } | null = null;
+
+  /** The chatId from the cloud message that delivered the challenge. Used as credentials on confirm. */
+  private pendingChatId: string | null = null;
+
+  onEstablished(callback: (transport: XacppTransport, sessionId: string, credentials: string) => void): void {
     this.onSession = callback;
   }
 
-  /** Register Bridge reference (called before establish). */
   setBridge(bridge: Bridge): void {
     this.bridge = bridge;
   }
 
-  /** Get the handler created by the last establish (for Bridge injection). */
   get lastHandler(): XabotSessionHandler | null {
     return this._lastHandler;
   }
 
+  /**
+   * Called by the cloud message handler when a user sends a challenge string to the bot
+   * via Feishu. If onEstablish() is already waiting, this unblocks it immediately;
+   * otherwise the result is cached for the next onEstablish() call.
+   */
+  submitChallenge(challenge: string, chatId: string): void {
+    const result = { challenge, chatId };
+    if (this.challengeResolver) {
+      const resolve = this.challengeResolver;
+      this.challengeResolver = null;
+      resolve(result);
+    } else {
+      this.pendingChallengeResult = result;
+    }
+  }
+
   async onEstablish(
     transport: XacppTransport,
-    credentials: string | null,
+    credentials?: string,
   ): Promise<EstablishDecision> {
-    if (credentials !== null) {
+    if (credentials) {
       return this.createSession(transport, credentials);
     }
-    const challenge = crypto.randomUUID();
-    this.pendingChallenge = challenge;
-    return { type: 'challenge_required', challenge };
+
+    // Challenge path: wait for submitChallenge() to deliver the challenge + chatId.
+    let result: { challenge: string; chatId: string };
+    if (this.pendingChallengeResult) {
+      result = this.pendingChallengeResult;
+      this.pendingChallengeResult = null;
+    } else {
+      result = await new Promise<{ challenge: string; chatId: string }>((resolve) => {
+        this.challengeResolver = resolve;
+      });
+    }
+
+    this.pendingChatId = result.chatId;
+    return { type: 'challenge_required', challenge: result.challenge };
   }
 
   async onEstablishConfirm(
     transport: XacppTransport,
-  ): Promise<{ sessionId: string; handler: XacppSessionHandler }> {
-    if (this.pendingChallenge === null) {
+  ): Promise<{ sessionId: string; handler: XacppSessionHandler; credentials: string }> {
+    if (this.pendingChatId === null) {
       throw new Error('no pending challenge to confirm');
     }
-    this.pendingChallenge = null;
-    return this.createSession(transport, null);
+    const chatId = this.pendingChatId;
+    this.pendingChatId = null;
+    this.pendingChallengeResult = null;
+    const result = this.createSession(transport, chatId);
+    return { sessionId: result.sessionId, handler: result.handler, credentials: chatId };
   }
 
   private createSession(
     transport: XacppTransport,
-    credentials: string | null,
+    credentials: string,
   ): EstablishDecision & { type: 'established' } {
     const sessionId = crypto.randomUUID();
     const handler = new XabotSessionHandler(sessionId);
@@ -69,6 +108,6 @@ export class XabotEstablishHandler implements EstablishHandler {
       this.onSession(transport, sessionId, credentials);
     }
 
-    return { type: 'established', sessionId, handler };
+    return { type: 'established', sessionId, handler, credentials };
   }
 }

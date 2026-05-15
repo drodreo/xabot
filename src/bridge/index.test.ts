@@ -66,10 +66,10 @@ function mockTransport(): XacppTransport {
   } as unknown as XacppTransport;
 }
 
-function mockSession(requestCommand: ReturnType<typeof vi.fn>): XacppSession {
+function mockSession(requestCommand: ReturnType<typeof vi.fn>, credentials: string = 'chat-a'): XacppSession {
   return {
     sessionId: 'sess-1',
-    credentials: null,
+    credentials,
     requestCommand,
   } as unknown as XacppSession;
 }
@@ -131,6 +131,7 @@ describe('Bridge', () => {
   it('cloud message triggers new_activity then invoke_activity', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
@@ -142,7 +143,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: null } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello agent' }] },
     });
@@ -151,6 +152,7 @@ describe('Bridge', () => {
   it('second cloud message reuses existing activityId', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
@@ -163,7 +165,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: null } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'second' }] },
     });
@@ -181,6 +183,7 @@ describe('Bridge', () => {
   it('image content is converted to ContentPart', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
@@ -205,6 +208,7 @@ describe('Bridge', () => {
   it('file content is converted to text ContentPart', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
@@ -230,20 +234,11 @@ describe('Bridge', () => {
   // The chatId↔activityId mapping is established through the run() path.
   // For handleEvent tests, we pre-populate by running a cloud message first.
 
-  it('handleEvent content_delta sends text to cloud', async () => {
+  it('handleEvent content_delta sends text to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
-    // Pre-populate mapping via cloud message
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
-
-    // Now test handleEvent
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
@@ -254,22 +249,13 @@ describe('Bridge', () => {
       },
     });
 
-    // cloudSend was called once for setup (via run) is not the case — run sends commands to session not to cloud
-    // So the first call to cloudSend should be from handleEvent
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Hello ' });
   });
 
-  it('handleEvent complete sends assistantReply to cloud', async () => {
+  it('handleEvent complete sends assistantReply to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -282,17 +268,10 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Final answer' });
   });
 
-  it('handleEvent notify sends message to cloud', async () => {
+  it('handleEvent notify sends message to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -315,9 +294,9 @@ describe('Bridge', () => {
     expect(cloudSend).not.toHaveBeenCalled();
   });
 
-  it('handleEvent with unknown activityId returns acknowledge without sending', async () => {
-    await bridge.handleEvent('unknown-act', {
-      activity: 'unknown-act',
+  it('handleEvent without sessionChatId returns acknowledge without sending', async () => {
+    await bridge.handleEvent('any-act', {
+      activity: 'any-act',
       event: {
         type: 'content_delta',
         round: 'r1',
@@ -332,17 +311,8 @@ describe('Bridge', () => {
   // ── Pending response ────────────────────────────────────────────────────
 
   it('resolvePending resolves a blocked action_request', async () => {
-    const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    // Pre-populate mapping
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -367,16 +337,8 @@ describe('Bridge', () => {
   });
 
   it('resolvePending resolves a blocked question', async () => {
-    const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -397,16 +359,8 @@ describe('Bridge', () => {
   // ── close() rejects pending ─────────────────────────────────────────────
 
   it('close() rejects pending responses', async () => {
-    const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -434,19 +388,38 @@ describe('Bridge', () => {
     expect(response).toEqual({ kind: 'acknowledge' });
   });
 
+  it('handleCommand message sends content to cloud via sessionChatId', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+
+    const response = await bridge.handleCommand({
+      message: {
+        content: [
+          { type: 'text', text: 'hello from agent' },
+          { type: 'image', source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 } },
+        ],
+      },
+    });
+
+    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'hello from agent' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/img.png' });
+  });
+
+  it('handleCommand message without sessionChatId returns acknowledge', async () => {
+    const response = await bridge.handleCommand({
+      message: { content: [{ type: 'text', text: 'orphan' }] },
+    });
+    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(cloudSend).not.toHaveBeenCalled();
+  });
+
   // ── Problem 4: non-text ContentPart handling ────────────────────────────
 
-  it('handleEvent content_delta with image sends image to cloud', async () => {
+  it('handleEvent content_delta with image sends image to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -464,17 +437,10 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/img.png' });
   });
 
-  it('handleEvent complete with image in assistantReply sends image to cloud', async () => {
+  it('handleEvent complete with image in assistantReply sends image to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -494,16 +460,8 @@ describe('Bridge', () => {
   // ── Problem 5: cloud.send failure cleans up pending ─────────────────────
 
   it('action_request: cloud.send failure returns error and cleans pending', async () => {
-    const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     // Make cloud.send reject on the next call
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
@@ -530,16 +488,8 @@ describe('Bridge', () => {
   });
 
   it('question: cloud.send failure returns error and cleans pending', async () => {
-    const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
-
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(msg(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 
@@ -560,7 +510,8 @@ describe('Bridge', () => {
 
   it('E2E: cloud msg → new_activity → invoke_activity → content_delta → cloud.send', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     // Cloud message arrives → new_activity + invoke_activity
     sessionRequestCommand
@@ -585,13 +536,14 @@ describe('Bridge', () => {
       },
     });
 
-    // Verify agent→cloud path
+    // Verify agent→cloud path via sessionChatId
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Hi there!' });
   });
 
-  it('E2E: cloud msg → new_activity → invoke_activity → complete → cloud.send', async () => {
+  it('E2E: cloud msg → new_activity → invoke_activity → complete → cloud.send via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-e2e2', agent: 'test' })
@@ -613,39 +565,33 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
   });
 
-  it('E2E: multiple chatIds → separate activities → correct routing', async () => {
+  it('E2E: same chatId multiple messages → activity reused, events routed to sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    const chatB = channelId('chat-b');
-    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-a', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' })
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-b', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValue({ kind: 'acknowledge' });
 
-    cloudMessagesIter.push(msg(chatA, 'to A'));
-    cloudMessagesIter.push(msg(chatB, 'to B'));
+    cloudMessagesIter.push(msg(chatA, 'first'));
+    cloudMessagesIter.push(msg(chatA, 'second'));
     cloudMessagesIter.stop();
     await bridge.run();
 
-    // Agent sends content_delta for each activity
+    // Only one new_activity for the same chatId
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+
+    // Outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
       activity: 'act-a',
       event: {
         type: 'content_delta', round: 'r1', pair: 'p1',
-        payload: { type: 'text', text: 'reply A' },
-      },
-    });
-    await bridge.handleEvent('act-b', {
-      activity: 'act-b',
-      event: {
-        type: 'content_delta', round: 'r1', pair: 'p1',
-        payload: { type: 'text', text: 'reply B' },
+        payload: { type: 'text', text: 'reply' },
       },
     });
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply A' });
-    expect(cloudSend).toHaveBeenCalledWith(chatB, { type: 'text', text: 'reply B' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply' });
   });
 });

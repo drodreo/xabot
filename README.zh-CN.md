@@ -37,6 +37,7 @@ npm install -g ./xabot-1.0.0.tgz       # 全局安装
 | `send` | 单次 | 向已知 chatId 发消息 |
 | `listen` | 长连接 | 交互式调试：stdin 发送 + 接收平台消息 |
 | `run` | 长连接 | 正式工作：云端 ↔ XACPP 双向桥接 |
+| `chat` | 长连接 | 交互式聊天：Establish 握手 + 终端与 Agent 对话 |
 
 ### 使用示例
 
@@ -54,7 +55,10 @@ xabot send --platform feishu --app-id X --app-secret Y <CHAT_ID> "Hello"
 xabot listen --platform feishu --app-id X --app-secret Y --chat-id <CHAT_ID>
 
 # 正式 Bridge 模式
-xabot run --platform feishu --app-id X --app-secret Y --chat-ids a,b,c
+xabot run --platform feishu --app-id X --app-secret Y
+
+# 交互式聊天（Establish 握手 + 对话）
+xabot chat --platform feishu --app-id X --app-secret Y
 ```
 
 ## 开发
@@ -80,9 +84,10 @@ xabot/
 ```
 
 核心设计：
-- **不持久化** — 所有配置（凭证、chat_ids）通过 CLI 参数传入
+- **不持久化** — 所有配置（凭证）通过 CLI 参数传入
+- **chatId 通过 Establish 握手获取** — bot 在云端消息中匹配 Initiator 的 challenge，动态获得 chatId
 - **Activity ↔ chatId 映射** — 每个 chatId 对应唯一一个 XACPP activity
-- **三步握手** — `credentials === null` → `challenge_required` → initiator 确认 → 创建 session；否则直接建立
+- **三步握手** — Initiator 生成 challenge → 用户发送给 bot → Responder 在云端消息中匹配 → `challenge_required` → initiator 确认 → 创建 session（chatId 作为 credentials）
 
 ## 许可
 

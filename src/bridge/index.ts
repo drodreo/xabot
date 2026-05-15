@@ -16,17 +16,24 @@ export class Bridge {
 
   /** chatId → activityId */
   private readonly chatToActivity = new Map<ChannelId, string>();
-  /** activityId → chatId */
-  private readonly activityToChat = new Map<string, ChannelId>();
 
   /** Obtained after establish, used to proactively send command/event */
   private session: XacppSession | null = null;
+
+  /** chatId bound to the established session (from session.credentials) */
+  private sessionChatId: ChannelId | null = null;
 
   /** Pending responses awaiting resolution: requestId → resolve */
   private readonly pendingResponses = new Map<string, (response: XacppResponse) => void>();
 
   private abortCtrl = new AbortController();
   private closed = false;
+
+  /** Whether the establish handshake has completed. */
+  private established = false;
+
+  /** Reference to the establish handler — Phase 1 feeds discovered challenges to it. */
+  private establishHandler: { submitChallenge(challenge: string, chatId: ChannelId): void } | null = null;
 
   constructor(cloud: PlatformClient, transport: XacppTransport) {
     this.cloud = cloud;
@@ -36,17 +43,36 @@ export class Bridge {
   /** Call after establish succeeds to inject session reference. */
   setSession(session: XacppSession): void {
     this.session = session;
+    this.sessionChatId = session.credentials as unknown as ChannelId;
+  }
+
+  /** Set the establish handler — Phase 1 feeds discovered challenges to it. */
+  setEstablishHandler(handler: { submitChallenge(challenge: string, chatId: ChannelId): void }): void {
+    this.establishHandler = handler;
   }
 
   /** Handle Command from downstream Agent (forwarded via XabotSessionHandler.onCommand). */
-  async handleCommand(_command: XacppCommand): Promise<XacppResponse> {
-    // xabot is a Responder, does not actively handle inbound commands for now
+  async handleCommand(command: XacppCommand): Promise<XacppResponse> {
+    if (typeof command === 'object' && 'message' in command) {
+      const chatId = this.sessionChatId;
+      if (!chatId) return { kind: 'acknowledge' };
+      for (const part of command.message.content) {
+        if (part.type === 'text') {
+          await this.cloud.send(chatId, { type: 'text', text: part.text });
+        } else if (part.type === 'image') {
+          await this.cloud.send(chatId, { type: 'image', url: part.source.remoteUrl });
+        } else {
+          await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
+        }
+      }
+      return { kind: 'acknowledge' };
+    }
     return { kind: 'acknowledge' };
   }
 
   /** Handle Event from downstream Agent (forwarded via XabotSessionHandler.onEvent). */
-  async handleEvent(activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
-    const chatId = this.activityToChat.get(activityId);
+  async handleEvent(_activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
+    const chatId = this.sessionChatId;
 
     switch (event.event.type) {
       case 'content_delta':
@@ -143,7 +169,7 @@ export class Bridge {
     }
   }
 
-  /** Cloud message loop: PlatformClient.messages() → session.requestCommand */
+  /** Cloud message loop: two-phase consumption. */
   async run(): Promise<void> {
     if (this.closed) return;
 
@@ -152,6 +178,17 @@ export class Bridge {
     try {
       for await (const msg of this.cloud.messages()) {
         if (signal.aborted) break;
+
+        // Phase 1: pre-establish — scan for challenge messages
+        if (!this.established) {
+          if (msg.content.type === 'text') {
+            this.establishHandler?.submitChallenge(msg.content.text, msg.chatId);
+          }
+          // Continue consuming — don't route to session yet
+          continue;
+        }
+
+        // Phase 2: post-establish — normal activity routing
         if (!this.session) {
           continue;
         }
@@ -162,7 +199,7 @@ export class Bridge {
         let activityId = this.chatToActivity.get(chatId);
         if (!activityId) {
           const createResponse = await this.session.requestCommand({
-            new_activity: { title: null },
+            new_activity: { title: '' },
           });
           if (createResponse.kind === 'activity_created') {
             activityId = createResponse.activity;
@@ -170,7 +207,6 @@ export class Bridge {
             continue;
           }
           this.chatToActivity.set(chatId, activityId);
-          this.activityToChat.set(activityId, chatId);
         }
 
         // Build ContentPart
@@ -199,12 +235,16 @@ export class Bridge {
     }
   }
 
+  /** Mark the establish handshake as completed — switches to Phase 2 routing. */
+  markEstablished(): void {
+    this.established = true;
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.abortCtrl.abort();
     this.chatToActivity.clear();
-    this.activityToChat.clear();
     for (const [, resolve] of this.pendingResponses) {
       resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
     }

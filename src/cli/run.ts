@@ -9,13 +9,10 @@
  * Handles SIGINT and SIGTERM gracefully, then exits cleanly.
  */
 
-import type { ChannelId } from '../core/types.js';
 import type { Bridge } from '../bridge/index.js';
 import type { XacppPeer } from 'xacpp';
 
 export interface RunOptions {
-  /** chatIds this agent owns. */
-  chatIds: ChannelId[];
   /** Output writer — defaults to process.stdout.write. */
   writer?: (chunk: string) => void;
 }
@@ -33,7 +30,6 @@ export async function run(
   options: RunOptions,
 ): Promise<void> {
   const {
-    chatIds,
     writer = (chunk: string) => process.stdout.write(chunk),
   } = options;
 
@@ -57,7 +53,7 @@ export async function run(
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
 
-  writer(`Bridge mode started, chatIds=[${chatIds.join(', ')}]\n`);
+  writer('Bridge mode started\n');
 
   await bridge.run();
   // Bridge.run() only resolves when the loops end (or close() was called).

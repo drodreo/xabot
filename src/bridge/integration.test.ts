@@ -114,10 +114,11 @@ describe('Bridge integration', () => {
 
     const session = {
       sessionId: 'sess-1',
-      credentials: null,
+      credentials: 'chat-a',
       requestCommand: sessionRequestCommand,
     } as unknown as XacppSession;
     bridge.setSession(session);
+    bridge.markEstablished();
   });
 
   afterEach(() => {
@@ -138,7 +139,7 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: null } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello' }] },
     });
@@ -181,15 +182,8 @@ describe('Bridge integration', () => {
 
   // ── L2: Agent → Cloud full path ────────────────────────────────────────
 
-  it('L2: content_delta event → cloud.send text', async () => {
+  it('L2: content_delta event → cloud.send text via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -202,15 +196,8 @@ describe('Bridge integration', () => {
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'streaming text' });
   });
 
-  it('L2: content_delta with image → cloud.send image', async () => {
+  it('L2: content_delta with image → cloud.send image via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -226,15 +213,8 @@ describe('Bridge integration', () => {
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/gen.png' });
   });
 
-  it('L2: complete event → cloud.send assistantReply', async () => {
+  it('L2: complete event → cloud.send assistantReply via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -247,15 +227,8 @@ describe('Bridge integration', () => {
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
   });
 
-  it('L2: notify event → cloud.send message', async () => {
+  it('L2: notify event → cloud.send message via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -267,47 +240,34 @@ describe('Bridge integration', () => {
 
   // ── L3: Multiple chatId routing isolation ──────────────────────────────
 
-  it('L3: two chats → two activities → events routed to correct chatId', async () => {
+  it('L3: same chatId → activity reused, events routed to sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    const chatB = channelId('chat-b');
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-a', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' })
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-b', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValue({ kind: 'acknowledge' });
 
-    cloudMessagesIter.push(makeMessage(chatA, 'to A'));
-    cloudMessagesIter.push(makeMessage(chatB, 'to B'));
+    cloudMessagesIter.push(makeMessage(chatA, 'first'));
+    cloudMessagesIter.push(makeMessage(chatA, 'second'));
     cloudMessagesIter.stop();
     await bridge.run();
 
-    // Events from act-a should go to chat-a, act-b to chat-b
+    // Only one new_activity for the same chatId
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+
+    // All outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
       activity: 'act-a',
-      event: { type: 'content_delta', round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply A' } },
-    });
-    await bridge.handleEvent('act-b', {
-      activity: 'act-b',
-      event: { type: 'content_delta', round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply B' } },
+      event: { type: 'content_delta', round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } },
     });
 
-    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply A' });
-    expect(cloudSendMock).toHaveBeenCalledWith(chatB, { type: 'text', text: 'reply B' });
+    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply' });
   });
 
   // ── L4: action_request block/resume ────────────────────────────────────
 
   it('L4: action_request blocks until resolvePending', async () => {
-    const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
-
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
@@ -334,15 +294,6 @@ describe('Bridge integration', () => {
   // ── L5: cloud.send failure cleans up pending ───────────────────────────
 
   it('L5: action_request cloud.send failure → error response, pending cleaned', async () => {
-    const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
-
     cloudSendMock.mockRejectedValueOnce(new Error('network down'));
 
     const response = await bridge.handleEvent('act-1', {
@@ -366,15 +317,6 @@ describe('Bridge integration', () => {
   });
 
   it('L5: sensitive_info_operation cloud.send failure → error response', async () => {
-    const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
-
     cloudSendMock.mockRejectedValueOnce(new Error('timeout'));
 
     const response = await bridge.handleEvent('act-1', {
@@ -392,15 +334,6 @@ describe('Bridge integration', () => {
   // ── close() ────────────────────────────────────────────────────────────
 
   it('close() clears mappings and rejects pending', async () => {
-    const chatA = channelId('chat-a');
-    sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
-
-    cloudMessagesIter.push(makeMessage(chatA, 'setup'));
-    cloudMessagesIter.stop();
-    await bridge.run();
-
     // Start an action_request (will be pending)
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',

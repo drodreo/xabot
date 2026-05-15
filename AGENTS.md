@@ -9,7 +9,7 @@ xabot is a bridge between downstream Agents and cloud IM platforms. It connects 
 - TypeScript, ESM mode
 - Build: `tsc`, output to `dist/`
 - Test: `vitest`
-- Runtime dependencies: `@larksuiteoapi/node-sdk`, `xacpp`, `commander`, `zod`
+- Runtime dependencies: `@larksuiteoapi/node-sdk`, `xacpp`, `commander`
 
 ## Common Commands
 
@@ -24,10 +24,10 @@ xabot is a bridge between downstream Agents and cloud IM platforms. It connects 
 | Subcommand | Lifecycle | Purpose |
 |--------|---------|------|
 | `health` | One-shot | Credential/connectivity check |
-| `discover` | One-shot (with timeout) | Get chatId via pairing code |
 | `send` | One-shot | Send message to a known chatId |
 | `listen` | Long-running | Interactive debug: stdin send + receive platform messages |
-| `run` | Long-running | Production: cloud ↔ XACPP bidirectional bridge |
+| `run` | Long-running | Production: cloud ↔ XACPP bidirectional bridge (chatId obtained via Establish handshake) |
+| `chat` | Long-running | Interactive chat: runs both Initiator and Responder in-process, Establish handshake + terminal chat |
 
 ## Global Installation
 
@@ -45,4 +45,5 @@ Uninstall: `npm uninstall -g xabot`
 ## Notes
 
 - All subcommands' platform message streams (Feishu WS / WeChat long-polling) are long-lived connections; process exit relies on `process.exit()` (Feishu SDK has a `setInterval` leak)
-- Human-readable output for `discover` and `listen` goes to stderr; structured results (JSON) go to stdout
+- Human-readable output for `listen` goes to stderr; structured results (JSON) go to stdout
+- Bridge chatId is obtained dynamically via the Establish handshake — no `--chat-ids` CLI parameter needed

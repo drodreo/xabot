@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Bridge } from '../bridge/index.js';
 import type { XacppPeer } from 'xacpp';
-import { channelId } from '../core/types.js';
 import { run } from './run.js';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +20,8 @@ function mockBridge(): Bridge & { closed: boolean; runCalled: boolean } {
       bridgeClosed = true;
     },
     setSession: vi.fn(),
+    setEstablishHandler: vi.fn(),
+    markEstablished: vi.fn(),
     handleCommand: vi.fn(),
     handleEvent: vi.fn(),
     resolvePending: vi.fn(),
@@ -49,9 +50,7 @@ describe('run', () => {
     const bridge = mockBridge();
     const peer = mockPeer();
 
-    await run(bridge, peer, {
-      chatIds: [channelId('och_1'), channelId('och_2')],
-    });
+    await run(bridge, peer, {});
 
     expect(bridge.runCalled).toBe(true);
     expect(bridge.closed).toBe(true);
@@ -64,7 +63,6 @@ describe('run', () => {
     const output: string[] = [];
 
     await run(bridge, peer, {
-      chatIds: [channelId('och_write')],
       writer: (chunk) => output.push(chunk),
     });
 
@@ -72,33 +70,12 @@ describe('run', () => {
     expect(output.some((o) => o.includes('Bridge closed'))).toBe(true);
   });
 
-  it('passes correct chatIds in startup message', async () => {
-    const bridge = mockBridge();
-    const peer = mockPeer();
-    const output: string[] = [];
-
-    await run(bridge, peer, {
-      chatIds: [channelId('och_1'), channelId('och_2')],
-      writer: (chunk) => output.push(chunk),
-    });
-
-    expect(output.some((o) => o.includes('och_1') && o.includes('och_2'))).toBe(true);
-  });
-
   it('close() is idempotent — multiple SIGINT only close once', async () => {
     const bridge = mockBridge();
     const peer = mockPeer();
-    const output: string[] = [];
 
-    // Run with writer capturing
-    const runPromise = run(bridge, peer, {
-      chatIds: [channelId('och_1')],
-      writer: (chunk) => output.push(chunk),
-    });
+    await run(bridge, peer, {});
 
-    await runPromise;
-
-    // Bridge.run() resolves immediately in mock, so close has already been called once
     expect(bridge.closed).toBe(true);
     expect(peer.disconnected).toBe(true);
   });

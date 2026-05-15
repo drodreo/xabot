@@ -20,7 +20,6 @@ Cloud IM ←→ xabot ←→ Downstream Agent (XACPP)
 |------------|---------|---------|
 | `xacpp` | ^0.3.1 | XACPP protocol implementation, connects downstream Agent |
 | `@larksuite/node-sdk` | latest | Feishu official SDK, WebSocket long connection + REST API |
-| `zod` | latest | CLI argument validation |
 
 ## 3. Project Structure
 
@@ -30,16 +29,15 @@ xabot/
 ├── tsconfig.json
 ├── src/
 │   ├── index.ts              # Public entry point
-│   ├── config/
-│   │   └── schema.ts         # CLI argument schema (zod validation, no persistence)
 │   ├── core/
 │   │   ├── types.ts          # Standard message types (Message, ChannelId, UserId)
 │   │   ├── client.ts         # Platform Client interface
 │   │   ├── error.ts          # Structured error types
 │   │   └── pairing.ts        # Pairing code flow
 │   ├── xacpp/
-│   │   ├── establish-handler.ts  # XACPP EstablishHandler implementation
-│   │   └── session-handler.ts    # XACPP SessionHandler implementation
+│   │   ├── establish-handler.ts      # XACPP EstablishHandler implementation
+│   │   ├── session-handler.ts        # XACPP SessionHandler (Responder side)
+│   │   └── initiator-session-handler.ts # XACPP SessionHandler (Initiator side, chat subcommand)
 │   ├── platforms/
 │   │   ├── feishu/
 │   │   │   ├── client.ts     # Feishu Client implementation
@@ -55,10 +53,11 @@ xabot/
 │       ├── listen.ts         # listen subcommand
 │       ├── send.ts           # send subcommand
 │       ├── health.ts         # health subcommand
-│       └── run.ts            # run subcommand (Bridge mode)
+│       ├── run.ts            # run subcommand (Bridge mode)
+│       └── chat.ts           # chat subcommand (Initiator + Responder in-process)
 ```
 
-**Key: xabot does not persist any configuration.** All config (credentials, chat_ids) are passed via CLI arguments when the downstream Agent starts.
+**Key: xabot does not persist any configuration.** All config (credentials) are passed via CLI arguments when the downstream Agent starts. The chatId is obtained dynamically via the Establish handshake.
 
 ## 4. Core Interface Design
 
@@ -103,6 +102,7 @@ Transport  Frame layer: JSONL envelope encode/decode + request-response ID corre
 
 - xabot is the XACPP Responder (passively accepts establish and events)
 - Downstream Agent is the Initiator (actively initiates establish)
+- Challenge flow: Initiator generates challenge → user sends to bot via Feishu → Responder matches in cloud.messages() → chatId becomes credentials
 
 ## 5. Communication Modes
 
@@ -118,12 +118,15 @@ Both Feishu and WeChat require no open ports.
 ### Startup
 
 ```
-Downstream Agent call: xabot run --platform feishu --app-id X --app-secret Y --chat-ids a,b,c
+Downstream Agent call: xabot run --platform feishu --app-id X --app-secret Y
 ├─ All config passed via CLI arguments, xabot does not persist any config
 ├─ Platform Client.connect() (Feishu WebSocket / WeChat long-polling)
+├─ Bridge.run() Phase 1: scan cloud messages for challenge (UUID format text)
 ├─ XacppPeer.connect() (stdin/stdout JSONL)
-├─ Wait for downstream Agent establish → obtain Session → inject Bridge
-└─ Bridge.run() → cloud message loop
+│   └─ Establish handshake: Initiator sends challenge → user sends to bot →
+│      Responder matches via cloud.messages() → obtain chatId as credentials
+├─ Bridge.markEstablished() → switch to Phase 2
+└─ Bridge.run() Phase 2: activity routing (cloud ↔ XACPP)
 ```
 
 ### Message Loop

@@ -18,6 +18,3 @@ export type { PlatformClient } from './core/client.js';
 export { XabotEstablishHandler } from './xacpp/establish-handler.js';
 export { XabotSessionHandler } from './xacpp/session-handler.js';
 export { Bridge } from './bridge/index.js';
-export { parseDiscoverArgs, DiscoverArgsSchema } from './config/schema.js';
-export type { DiscoverArgs } from './config/schema.js';
-export { discover, DiscoverTimeoutError } from './cli/discover.js';

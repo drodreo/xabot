@@ -54,7 +54,10 @@ xabot send --platform feishu --app-id X --app-secret Y <CHAT_ID> "Hello"
 xabot listen --platform feishu --app-id X --app-secret Y --chat-id <CHAT_ID>
 
 # Production bridge mode
-xabot run --platform feishu --app-id X --app-secret Y --chat-ids a,b,c
+xabot run --platform feishu --app-id X --app-secret Y
+
+# Interactive chat (Establish handshake + chat)
+xabot chat --platform feishu --app-id X --app-secret Y
 ```
 
 ## Development
@@ -80,9 +83,10 @@ xabot/
 ```
 
 Key design points:
-- **No persistence** — all configuration (credentials, chat_ids) is passed via CLI arguments
+- **No persistence** — all configuration (credentials) is passed via CLI arguments
+- **chatId via Establish handshake** — the bot obtains chatId dynamically when the Initiator's challenge is matched in cloud messages
 - **Activity ↔ chatId mapping** — each chatId maps to exactly one XACPP activity
-- **Three-step handshake** — `credentials === null` → `challenge_required` → initiator confirm → session; otherwise directly established
+- **Three-step handshake** — Initiator generates challenge → user sends to bot → Responder matches in cloud → `challenge_required` → initiator confirm → session with chatId as credentials
 
 ## License
 
