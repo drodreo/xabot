@@ -1,11 +1,8 @@
 import { Command, Option } from 'commander';
 import { FeishuClient, type FeishuClientConfig } from '../platforms/feishu/client.js';
-import { listen } from './listen.js';
-import { send } from './send.js';
 import { health } from './health.js';
 import { run } from './run.js';
 import { chat, type ChatOptions } from './chat.js';
-import { channelId } from '../core/types.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
@@ -23,30 +20,6 @@ export function registerFeishu(program: Command): void {
     .addOption(new Option('--app-id <id>', 'Feishu App ID').makeOptionMandatory(true))
     .addOption(new Option('--app-secret <secret>', 'Feishu App Secret').makeOptionMandatory(true))
     .addOption(new Option('--log-level <level>', 'Log level').choices(['info', 'debug', 'trace']).default('info'));
-
-  feishu
-    .command('listen')
-    .requiredOption('--chat-id <id>', 'Chat ID for bidirectional messaging')
-    .description('Interactive debug: relay stdin to chatId, print incoming messages to stderr')
-    .action(async (opts) => {
-      const { appId, appSecret, logLevel } = feishu.opts();
-      const client = createFeishuClient(appId, appSecret, logLevel);
-      await client.connect();
-      await listen(client, { chatId: channelId(opts.chatId) });
-    });
-
-  feishu
-    .command('send')
-    .argument('<chatId>', 'Target chat ID')
-    .argument('<message...>', 'Message text')
-    .description('Send a text message to the specified chatId')
-    .action(async (chatId: string, message: string[]) => {
-      const { appId, appSecret, logLevel } = feishu.opts();
-      const client = createFeishuClient(appId, appSecret, logLevel);
-      await client.connect();
-      await send(client, message.join(' '), { chatId: channelId(chatId) });
-      await client.close();
-    });
 
   feishu
     .command('health')

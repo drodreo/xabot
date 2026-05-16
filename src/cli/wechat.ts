@@ -1,12 +1,9 @@
 import { Command } from 'commander';
 import { WechatClient, type WechatConfig } from '../platforms/wechat/client.js';
 import { login } from '../platforms/wechat/login.js';
-import { listen } from './listen.js';
-import { send } from './send.js';
 import { health } from './health.js';
 import { run } from './run.js';
 import { chat, type ChatOptions } from './chat.js';
-import { channelId } from '../core/types.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
@@ -28,32 +25,6 @@ export function registerWechat(program: Command): void {
     .action(async () => {
       const result = await login();
       process.stdout.write(JSON.stringify(result) + '\n');
-    });
-
-  wechat
-    .command('listen')
-    .requiredOption('--token <token>', 'WeChat iLink Bot token')
-    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
-    .requiredOption('--chat-id <id>', 'Chat ID for bidirectional messaging')
-    .description('Interactive debug: relay stdin to chatId, print incoming messages to stderr')
-    .action(async (opts) => {
-      const client = createWechatClient(opts.token, opts.baseUrl);
-      await client.connect();
-      await listen(client, { chatId: channelId(opts.chatId) });
-    });
-
-  wechat
-    .command('send')
-    .requiredOption('--token <token>', 'WeChat iLink Bot token')
-    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
-    .argument('<chatId>', 'Target chat ID')
-    .argument('<message...>', 'Message text')
-    .description('Send a text message to the specified chatId')
-    .action(async (chatId: string, message: string[], opts: { token: string; baseUrl?: string }) => {
-      const client = createWechatClient(opts.token, opts.baseUrl);
-      await client.connect();
-      await send(client, message.join(' '), { chatId: channelId(chatId) });
-      await client.close();
     });
 
   wechat
