@@ -90,6 +90,10 @@ export class WechatClient implements PlatformClient {
           base_info: { channel_version: '1' },
         });
 
+        if (!res.ok) {
+          throw XabotError.platform(`WechatClient poll error: HTTP ${res.status}`);
+        }
+
         const data = (await res.json()) as {
           ret?: number;
           errcode?: number;
@@ -97,7 +101,9 @@ export class WechatClient implements PlatformClient {
           msgs?: WeixinMessage[];
         };
 
-        if (data.ret !== 0) {
+        // Real API returns { msgs, get_updates_buf } without ret field on success.
+        // Only check ret/errcode when they are present.
+        if (data.ret !== undefined && data.ret !== 0) {
           if (data.errcode === -14) {
             console.error('[WechatClient] session expired (errcode=-14), stopping poll');
             void this.close();
@@ -150,13 +156,18 @@ export class WechatClient implements PlatformClient {
     const body = fromMessageContent(chatId, content, contextToken);
 
     const res = await this.post('/ilink/bot/sendmessage', body);
+
+    if (!res.ok) {
+      throw XabotError.platform(`WechatClient send failed: HTTP ${res.status}`);
+    }
+
     const data = (await res.json()) as {
       ret?: number;
       errcode?: number;
       msg?: { client_id?: string };
     };
 
-    if (data.ret !== 0) {
+    if (data.ret !== undefined && data.ret !== 0) {
       throw XabotError.platform(
         `WechatClient send failed: ret=${data.ret}, errcode=${data.errcode}`,
       );

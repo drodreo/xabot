@@ -17,8 +17,9 @@ export interface WeixinMessage {
   message_type: number;
   context_token: string;
   item_list: WeixinMessageItem[];
+  message_id?: number;
   msg_id?: string;
-  create_time?: number;
+  create_time_ms?: number;
 }
 
 export type WeixinMessageItem =
@@ -99,8 +100,9 @@ function parseItem(item?: WeixinMessageItem): MessageContent {
 }
 
 export function toStandardMessage(msg: WeixinMessage): Message {
+  const id = msg.message_id != null ? String(msg.message_id) : (msg.msg_id ?? String(Date.now()));
   return {
-    id: messageId(msg.msg_id ?? String(Date.now())),
+    id: messageId(id),
     chatId: channelId(msg.from_user_id),
     senderId: userId(msg.from_user_id),
     content: parseItem(msg.item_list[0]),
