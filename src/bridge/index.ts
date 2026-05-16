@@ -198,13 +198,20 @@ export class Bridge {
         // Find or create activityId
         let activityId = this.chatToActivity.get(chatId);
         if (!activityId) {
-          const createResponse = await this.session.requestCommand({
-            new_activity: { title: '' },
-          });
-          if (createResponse.kind === 'activity_ready') {
-            activityId = createResponse.activity;
+          // Try to recover the last activity first
+          const lastResponse = await this.session.requestCommand('last_activity');
+          if (lastResponse.kind === 'activity_ready') {
+            activityId = lastResponse.activity;
           } else {
-            continue;
+            // No recent activity — create a new one
+            const createResponse = await this.session.requestCommand({
+              new_activity: { title: '' },
+            });
+            if (createResponse.kind === 'activity_ready') {
+              activityId = createResponse.activity;
+            } else {
+              continue;
+            }
           }
           this.chatToActivity.set(chatId, activityId);
         }

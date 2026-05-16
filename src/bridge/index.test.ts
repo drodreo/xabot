@@ -134,6 +134,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -142,9 +143,10 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello agent' }] },
     });
   });
@@ -155,6 +157,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
@@ -164,9 +167,10 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'second' }] },
     });
   });
@@ -186,6 +190,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -200,7 +205,7 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[1]![0] as any;
+    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
     expect(invokeCall.invoke_activity.messages[0].type).toBe('image');
     expect(invokeCall.invoke_activity.messages[0].source.remoteUrl).toBe('https://example.com/img.png');
   });
@@ -211,6 +216,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -225,9 +231,86 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[1]![0] as any;
+    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
     expect(invokeCall.invoke_activity.messages[0].type).toBe('text');
     expect(invokeCall.invoke_activity.messages[0].text).toBe('[file: doc.pdf]');
+  });
+
+  it('last_activity returns activity_ready → no new_activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, 'hello'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+      invoke_activity: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] },
+    });
+    // new_activity was never called
+    const newActivityCalls = sessionRequestCommand.mock.calls.filter(
+      (call) => typeof call[0] === 'object' && 'new_activity' in call[0],
+    );
+    expect(newActivityCalls).toHaveLength(0);
+  });
+
+  it('last_activity returns activity_not_found → falls back to new_activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, 'hello'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
+      invoke_activity: { activity: 'act-new', messages: [{ type: 'text', text: 'hello' }] },
+    });
+  });
+
+  it('cached activityId → skips both last_activity and new_activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-cached', agent: 'test' })
+      .mockResolvedValue({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, 'first'));
+    cloudMessagesIter.push(msg(chatA, 'second'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    // last_activity + new_activity for first msg, invoke for both
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
+      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] },
+    });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
+      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'second' }] },
+    });
   });
 
   // ── Agent → Cloud (via handleEvent) ─────────────────────────────────────
@@ -513,8 +596,9 @@ describe('Bridge', () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
 
-    // Cloud message arrives → new_activity + invoke_activity
+    // Cloud message arrives → last_activity → activity_not_found → new_activity + invoke_activity
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -523,7 +607,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     // Verify cloud→agent path
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
 
     // Agent responds with content_delta
     await bridge.handleEvent('act-e2e', {
@@ -546,6 +630,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e2', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -571,6 +656,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
@@ -580,8 +666,9 @@ describe('Bridge', () => {
     await bridge.run();
 
     // Only one new_activity for the same chatId
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
 
     // Outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {

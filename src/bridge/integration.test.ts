@@ -127,9 +127,10 @@ describe('Bridge integration', () => {
 
   // ── L1: Cloud → Agent full path ────────────────────────────────────────
 
-  it('L1: cloud text message → new_activity + invoke_activity', async () => {
+  it('L1: cloud text message → last_activity not found → new_activity + invoke_activity', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -138,9 +139,10 @@ describe('Bridge integration', () => {
 
     await bridge.run();
 
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
       invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello' }] },
     });
   });
@@ -148,6 +150,7 @@ describe('Bridge integration', () => {
   it('L1: cloud image message → image ContentPart', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
@@ -162,13 +165,14 @@ describe('Bridge integration', () => {
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[1]![0] as any;
+    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
     expect(invokeCall.invoke_activity.messages[0].type).toBe('image');
   });
 
   it('L1: failed new_activity → message skipped', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'error', code: 'rejected', message: 'no' });
 
     cloudMessagesIter.push(makeMessage(chatA, 'hello'));
@@ -176,8 +180,30 @@ describe('Bridge integration', () => {
 
     await bridge.run();
 
-    // Only new_activity was attempted, no invoke_activity
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
+    // last_activity then new_activity attempted, no invoke_activity
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('L1: last_activity returns activity_ready → skips new_activity', async () => {
+    const chatA = channelId('chat-a');
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(makeMessage(chatA, 'hello'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+      invoke_activity: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] },
+    });
+    const newActivityCalls = sessionRequestCommand.mock.calls.filter(
+      (call) => typeof call[0] === 'object' && 'new_activity' in call[0],
+    );
+    expect(newActivityCalls).toHaveLength(0);
   });
 
   // ── L2: Agent → Cloud full path ────────────────────────────────────────
@@ -244,6 +270,7 @@ describe('Bridge integration', () => {
     const chatA = channelId('chat-a');
 
     sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
@@ -252,9 +279,10 @@ describe('Bridge integration', () => {
     cloudMessagesIter.stop();
     await bridge.run();
 
-    // Only one new_activity for the same chatId
-    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+    // last_activity + new_activity for first msg, invoke for both
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
 
     // All outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {

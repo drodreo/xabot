@@ -13,10 +13,11 @@
 import type { PlatformClient } from '../core/client.js';
 import { XacppPeer, XacppSession, SocketTransport } from 'xacpp';
 import * as net from 'node:net';
-import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { Bridge } from '../bridge/index.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { InitiatorSessionHandler } from '../xacpp/initiator-session-handler.js';
+import { StdinRouter } from '../xacpp/stdin-router.js';
 
 export interface ChatOptions {
   /** Output writer — defaults to process.stderr.write. */
@@ -75,7 +76,8 @@ export async function chat(cloud: PlatformClient, options?: ChatOptions): Promis
     async onEstablishConfirm() { throw new Error('Unexpected establish_confirm on Initiator'); },
   };
   const initiatorPeer = new XacppPeer(initiatorTransport, dummyEstablishHandler);
-  const initiatorHandler = new InitiatorSessionHandler(writer);
+  const router = new StdinRouter(process.stdin as unknown as Readable);
+  const initiatorHandler = new InitiatorSessionHandler(writer, router);
 
   // Fire-and-forget: peer.connect() internally calls transport.connect()
   // which opens the TCP socket. The server will see the connection and
@@ -134,22 +136,21 @@ export async function chat(cloud: PlatformClient, options?: ChatOptions): Promis
   writer(`[chat] Connected! chatId: ${chatId}\n`);
   writer('[chat] Ready. Type a message and press Enter, or wait for Feishu/WeChat messages.\n');
 
+  router.subscribe('default', (text) => {
+    return initiatorHandler.sendReply(session, text).catch((err) => {
+      writer(`Send failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    });
+  });
+
   // ── Step 6: Chat loop ──────────────────────────────────────────────────
   // No new_activity here — the Responder (Bridge) creates activities when
   // cloud messages arrive, routing them via requestCommand → Initiator.onCommand.
   // Terminal replies go via Initiator.sendReply → requestCommand({ message }) → Bridge.handleCommand → cloud.
 
-  const rl = createInterface({ input: process.stdin as NodeJS.ReadableStream });
-
   try {
-    for await (const line of rl) {
-      const text = line.trim();
-      if (!text) continue;
-
-      await initiatorHandler.sendReply(session, text);
-    }
+    await router.start();
   } finally {
-    rl.close();
+    router.close();
     await initiatorPeer.disconnect();
     await responderPeer.disconnect();
     await bridge.close();
