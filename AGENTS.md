@@ -21,13 +21,16 @@ xabot is a bridge between downstream Agents and cloud IM platforms. It connects 
 
 ## CLI Subcommands
 
+Platform subcommands (`feishu` / `wechat`), each with:
+
 | Subcommand | Lifecycle | Purpose |
 |--------|---------|------|
+| `login` | One-shot | (wechat only) QR code scan login, outputs `{ token, baseUrl }` to stdout |
 | `health` | One-shot | Credential/connectivity check |
-| `send` | One-shot | Send message to a known chatId |
-| `listen` | Long-running | Interactive debug: stdin send + receive platform messages |
 | `run` | Long-running | Production: cloud ↔ XACPP bidirectional bridge (chatId obtained via Establish handshake) |
 | `chat` | Long-running | Interactive chat: runs both Initiator and Responder in-process, Establish handshake + terminal chat |
+
+See `skills/xabot-cli/SKILL.md` for full usage guide.
 
 ## Global Installation
 
@@ -45,5 +48,5 @@ Uninstall: `npm uninstall -g xabot`
 ## Notes
 
 - All subcommands' platform message streams (Feishu WS / WeChat long-polling) are long-lived connections; process exit relies on `process.exit()` (Feishu SDK has a `setInterval` leak)
-- Human-readable output for `listen` goes to stderr; structured results (JSON) go to stdout
+- Human-readable output goes to stderr; structured results (JSON) go to stdout
 - Bridge chatId is obtained dynamically via the Establish handshake — no `--chat-ids` CLI parameter needed

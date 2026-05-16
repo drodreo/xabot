@@ -8,6 +8,7 @@
  *
  * Platforms:
  *   feishu    Feishu (Lark) platform commands
+ *   wechat    WeChat (iLink Bot) platform commands
  */
 
 import { Command } from 'commander';
@@ -26,17 +27,14 @@ Platform subcommands:
   .addHelpText(
     'after',
     `Examples:
-  xabot feishu --app-id cli --app-secret secret listen --chat-id xxx
-  xabot feishu --app-id cli --app-secret secret send och_xxx "Hello!"
   xabot feishu --app-id cli --app-secret secret health
   xabot feishu --app-id cli --app-secret secret run
   xabot feishu --app-id cli --app-secret secret chat
 
-  xabot wechat --token abc123 listen --chat-id xxx
-  xabot wechat --token abc123 send uid_xxx "Hello!"
-  xabot wechat --token abc123 health
-  xabot wechat --token abc123 run
-  xabot wechat --token abc123 chat`,
+  xabot wechat login
+  xabot wechat --token ilinkbot_xxx health
+  xabot wechat --token ilinkbot_xxx run
+  xabot wechat --token ilinkbot_xxx chat`,
   );
 
 registerFeishu(program);
