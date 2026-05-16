@@ -33,10 +33,11 @@ export function registerWechat(program: Command): void {
   wechat
     .command('listen')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
+    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .requiredOption('--chat-id <id>', 'Chat ID for bidirectional messaging')
     .description('Interactive debug: relay stdin to chatId, print incoming messages to stderr')
     .action(async (opts) => {
-      const client = createWechatClient(opts.token);
+      const client = createWechatClient(opts.token, opts.baseUrl);
       await client.connect();
       await listen(client, { chatId: channelId(opts.chatId) });
     });
@@ -44,11 +45,12 @@ export function registerWechat(program: Command): void {
   wechat
     .command('send')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
+    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .argument('<chatId>', 'Target chat ID')
     .argument('<message...>', 'Message text')
     .description('Send a text message to the specified chatId')
-    .action(async (chatId: string, message: string[], opts: { token: string }) => {
-      const client = createWechatClient(opts.token);
+    .action(async (chatId: string, message: string[], opts: { token: string; baseUrl?: string }) => {
+      const client = createWechatClient(opts.token, opts.baseUrl);
       await client.connect();
       await send(client, message.join(' '), { chatId: channelId(chatId) });
       await client.close();
@@ -57,9 +59,10 @@ export function registerWechat(program: Command): void {
   wechat
     .command('health')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
+    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .description('Verify credentials and connection health')
     .action(async (opts) => {
-      const client = createWechatClient(opts.token);
+      const client = createWechatClient(opts.token, opts.baseUrl);
       await client.connect();
       await health(client);
       await client.close();
@@ -68,9 +71,10 @@ export function registerWechat(program: Command): void {
   wechat
     .command('run')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
+    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
     .action(async (opts) => {
-      const cloud = createWechatClient(opts.token);
+      const cloud = createWechatClient(opts.token, opts.baseUrl);
       await cloud.connect();
 
       const transport = new StdioTransport(process.stdout, process.stdin);
@@ -95,10 +99,11 @@ export function registerWechat(program: Command): void {
   wechat
     .command('chat')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
+    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
     .action(async (opts) => {
-      const cloud = createWechatClient(opts.token);
+      const cloud = createWechatClient(opts.token, opts.baseUrl);
       await cloud.connect();
       const chatOpts: ChatOptions = {};
       if (opts.credentials) {
