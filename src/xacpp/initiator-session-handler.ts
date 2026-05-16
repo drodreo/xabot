@@ -25,7 +25,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       // Responder requests a new activity — generate an ID.
       this.activityId = crypto.randomUUID();
       this.writer(`[chat] activity created: ${this.activityId}\n`);
-      return { kind: 'activity_created', activity: this.activityId, agent: 'chat' };
+      return { kind: 'activity_ready', activity: this.activityId, agent: 'chat' };
     }
 
     if (typeof command === 'object' && 'invoke_activity' in command) {

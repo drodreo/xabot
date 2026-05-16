@@ -201,7 +201,7 @@ export class Bridge {
           const createResponse = await this.session.requestCommand({
             new_activity: { title: '' },
           });
-          if (createResponse.kind === 'activity_created') {
+          if (createResponse.kind === 'activity_ready') {
             activityId = createResponse.activity;
           } else {
             continue;

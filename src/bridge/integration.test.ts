@@ -130,7 +130,7 @@ describe('Bridge integration', () => {
   it('L1: cloud text message → new_activity + invoke_activity', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(makeMessage(chatA, 'hello'));
@@ -148,7 +148,7 @@ describe('Bridge integration', () => {
   it('L1: cloud image message → image ContentPart', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
@@ -244,7 +244,7 @@ describe('Bridge integration', () => {
     const chatA = channelId('chat-a');
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-a', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(makeMessage(chatA, 'first'));

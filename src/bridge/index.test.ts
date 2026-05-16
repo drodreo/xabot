@@ -134,7 +134,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(msg(chatA, 'hello agent'));
@@ -155,7 +155,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(msg(chatA, 'first'));
@@ -186,7 +186,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
@@ -211,7 +211,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
@@ -515,7 +515,7 @@ describe('Bridge', () => {
 
     // Cloud message arrives → new_activity + invoke_activity
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-e2e', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(msg(chatA, 'hello'));
@@ -546,7 +546,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-e2e2', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e2', agent: 'test' })
       .mockResolvedValueOnce({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(msg(chatA, 'ping'));
@@ -571,7 +571,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_created', activity: 'act-a', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
       .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push(msg(chatA, 'first'));
