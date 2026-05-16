@@ -201,6 +201,7 @@ addGlobalOptions(program.command('run'))
 // ---------------------------------------------------------------------------
 
 addGlobalOptions(program.command('chat'))
+  .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
   .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
   .action(async (options: Record<string, unknown>) => {
     const cloud = createClient(
@@ -210,7 +211,11 @@ addGlobalOptions(program.command('chat'))
       options.logLevel as string | undefined,
     );
     await cloud.connect();
-    await chat(cloud);
+    const chatOpts: import('./chat.js').ChatOptions = {};
+    if (options.credentials) {
+      chatOpts.credentials = options.credentials as string;
+    }
+    await chat(cloud, chatOpts);
   });
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ import { StdinRouter } from '../xacpp/stdin-router.js';
 export interface ChatOptions {
   /** Output writer — defaults to process.stderr.write. */
   writer?: (chunk: string) => void;
+  /** Existing session credentials — skips challenge/pairing flow. */
+  credentials?: string;
 }
 
 /**
@@ -115,25 +117,36 @@ export async function chat(cloud: PlatformClient, options?: ChatOptions): Promis
   await initiatorConnectPromise;
   writer('[chat] Initiator peer connected\n');
 
-  // ── Step 5: Generate challenge & establish ─────────────────────────────
+  // ── Step 5: Establish (challenge or credentials) ───────────────────────
 
-  const challenge = crypto.randomUUID();
-  writer(`[chat] Pairing code: ${challenge}\n[chat] Send this code to the bot via Feishu/WeChat.\n`);
+  let session: XacppSession;
+  const credentials = options?.credentials;
 
-  writer('[chat] calling initiatorPeer.establish()...\n');
-  const session = await initiatorPeer.establish(
-    undefined, // first connection, no credentials
-    initiatorHandler,
-    (received) => {
-      writer(`[chat] challenge verify: expected=${challenge}, received=${received}\n`);
-      if (received !== challenge) {
-        throw new Error(`Challenge mismatch: expected ${challenge}, got ${received}`);
-      }
-    },
-  );
+  if (credentials) {
+    writer(`[chat] Reconnecting with credentials: ${credentials}\n`);
+    writer('[chat] calling initiatorPeer.establish() with credentials...\n');
+    session = await initiatorPeer.establish(credentials, initiatorHandler, () => {});
+    const chatId = session.credentials;
+    writer(`[chat] Re-established, chatId: ${chatId}\n`);
+  } else {
+    const challenge = crypto.randomUUID();
+    writer(`[chat] Pairing code: ${challenge}\n[chat] Send this code to the bot via Feishu/WeChat.\n`);
 
-  const chatId = session.credentials;
-  writer(`[chat] Connected! chatId: ${chatId}\n`);
+    writer('[chat] calling initiatorPeer.establish()...\n');
+    session = await initiatorPeer.establish(
+      undefined,
+      initiatorHandler,
+      (received) => {
+        writer(`[chat] challenge verify: expected=${challenge}, received=${received}\n`);
+        if (received !== challenge) {
+          throw new Error(`Challenge mismatch: expected ${challenge}, got ${received}`);
+        }
+      },
+    );
+    const chatId = session.credentials;
+    writer(`[chat] Connected! chatId: ${chatId}\n`);
+  }
+
   writer('[chat] Ready. Type a message and press Enter, or wait for Feishu/WeChat messages.\n');
 
   router.subscribe('default', (text) => {
