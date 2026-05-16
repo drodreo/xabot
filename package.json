@@ -1,22 +1,35 @@
 {
   "name": "xabot",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "files": [
-    "dist"
-  ],
+  "description": "Bidirectional message bridge connecting XACPP-enabled Agents to Feishu and WeChat.",
+  "author": "drodreo",
+  "license": "MIT",
+  "type": "module",
   "bin": {
     "xabot": "./dist/cli/index.js"
   },
-  "scripts": {
-    "test": "vitest run",
-    "build": "rm -rf dist && tsc && npm pack"
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "xacpp",
+    "bot",
+    "feishu",
+    "wechat",
+    "bridge",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drodreo/xabot.git"
   },
-  "keywords": [],
-  "author": "",
-  "type": "module",
-  "license": "ISC",
+  "homepage": "https://github.com/drodreo/xabot#readme",
+  "bugs": "https://github.com/drodreo/xabot/issues",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "test": "vitest run",
+    "prepublishOnly": "npm test"
+  },
   "devDependencies": {
     "@types/node": "^25.6.2",
     "typescript": "^6.0.3",

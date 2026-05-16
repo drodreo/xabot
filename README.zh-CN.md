@@ -2,64 +2,86 @@
 
 # xabot
 
-下游 Agent 与云端 IM 之间的桥梁。通过 [XACPP](https://github.com/drodreo/xacpp-ts) 协议连接 Agent，通过平台 SDK 连接云端（飞书/微信），实现双向消息路由。
+连接 XACPP Agent 与飞书、微信的双向消息桥接工具。
 
 ```
-云端 IM ←→ xabot ←→ 下游 Agent (XACPP)
+云端 IM（飞书 / 微信）←→ xabot ←→ Agent (XACPP)
 ```
 
-**xabot 是 XACPP Responder** — 被动接受下游 Agent（Initiator）的 establish 请求和事件。
-
-## 技术栈
-
-- TypeScript，ESM 模式
-- 构建：`tsc` → `dist/`
-- 测试：`vitest`
-- 运行时依赖：`@larksuiteoapi/node-sdk`、`xacpp`、`commander`、`zod`
+xabot 是 **XACPP Responder** — 被动接受下游 XACPP Initiator 的 establish 请求，在云端 IM 平台与 Agent 之间路由消息。xabot 仅兼容 [XACPP 协议](#xacpp-协议)对等端。
 
 ## 安装
 
 ```bash
-npm run build                          # tsc 编译 + npm pack 生成 xabot-1.0.0.tgz
-npm install -g ./xabot-1.0.0.tgz       # 全局安装
+npm install -g xabot
 ```
 
-安装后任意目录可直接 `xabot <subcommand>`。
+或从源码构建：
 
-卸载：`npm uninstall -g xabot`
+```bash
+git clone https://github.com/drodreo/xabot.git
+cd xabot
+npm install
+npm run build
+npm install -g .
+```
 
-## CLI 子命令
+## 使用
 
-| 子命令 | 生命周期 | 用途 |
-|--------|---------|------|
-| `health` | 单次 | 凭证/连通性验证 |
-| `discover` | 单次（有超时） | 通过配对码获取 chatId |
-| `send` | 单次 | 向已知 chatId 发消息 |
-| `listen` | 长连接 | 交互式调试：stdin 发送 + 接收平台消息 |
-| `run` | 长连接 | 正式工作：云端 ↔ XACPP 双向桥接 |
-| `chat` | 长连接 | 交互式聊天：Establish 握手 + 终端与 Agent 对话 |
+CLI 按平台组织为子命令：
 
-### 使用示例
+```
+xabot feishu --app-id <ID> --app-secret <SECRET> <action>
+xabot wechat login
+xabot wechat --token <TOKEN> <action>
+```
+
+### 命令
+
+| 命令 | 生命周期 | 说明 |
+|------|---------|------|
+| `login` | 单次 | 仅微信 — 扫码登录，stdout 输出 `{ token, baseUrl }` |
+| `health` | 单次 | 验证凭证与连通性 |
+| `run` | 长连接 | 正式模式：stdio ↔ 平台双向桥接 |
+| `chat` | 长连接 | 交互调试：终端 ↔ Agent ↔ 平台 |
+
+### 飞书
 
 ```bash
 # 健康检查
-xabot health --platform feishu --app-id X --app-secret Y
+xabot feishu --app-id <ID> --app-secret <SECRET> health
 
-# 通过配对码发现 chatId
-xabot discover --platform feishu --app-id X --app-secret Y
+# 正式桥接
+xabot feishu --app-id <ID> --app-secret <SECRET> run
 
-# 发送消息
-xabot send --platform feishu --app-id X --app-secret Y <CHAT_ID> "Hello"
-
-# 交互式监听
-xabot listen --platform feishu --app-id X --app-secret Y --chat-id <CHAT_ID>
-
-# 正式 Bridge 模式
-xabot run --platform feishu --app-id X --app-secret Y
-
-# 交互式聊天（Establish 握手 + 对话）
-xabot chat --platform feishu --app-id X --app-secret Y
+# 交互式聊天
+xabot feishu --app-id <ID> --app-secret <SECRET> chat
 ```
+
+### 微信
+
+微信采用两阶段连接 — 先登录获取 token，再使用 token：
+
+```bash
+# 阶段 1：扫码登录 → stdout 输出 { token, baseUrl }
+xabot wechat login
+
+# 阶段 2：使用 token
+xabot wechat --token <TOKEN> health
+xabot wechat --token <TOKEN> run
+xabot wechat --token <TOKEN> chat
+```
+
+### chat 终端命令
+
+在 `chat` 模式下，文本输入会被解析为命令或普通消息：
+
+| 输入 | 动作 |
+|------|------|
+| 纯文本 | 作为 `invoke_activity` 发送给 Agent |
+| `/new [prompt]` | 创建新 Activity |
+| `/compact` | 压缩当前 Activity 上下文 |
+| `/cancel` | 取消当前 Activity |
 
 ## 开发
 
@@ -84,10 +106,20 @@ xabot/
 ```
 
 核心设计：
-- **不持久化** — 所有配置（凭证）通过 CLI 参数传入
-- **chatId 通过 Establish 握手获取** — bot 在云端消息中匹配 Initiator 的 challenge，动态获得 chatId
-- **Activity ↔ chatId 映射** — 每个 chatId 对应唯一一个 XACPP activity
-- **三步握手** — Initiator 生成 challenge → 用户发送给 bot → Responder 在云端消息中匹配 → `challenge_required` → initiator 确认 → 创建 session（chatId 作为 credentials）
+- **无持久化** — 凭证通过 CLI 参数传入
+- **chatId 通过 Establish 握手获取** — 动态获取，无需硬编码
+- **Activity ↔ chatId** — 每个 chatId 对应唯一一个 XACPP activity
+
+## XACPP 协议
+
+xabot 实现 XACPP（eXtensible Agent Control Plane Protocol）的 Responder 侧。下游 Agent 作为 Initiator 连接。
+
+协议 SDK：
+
+| SDK | 语言 | 仓库 |
+|-----|------|------|
+| xacpp-ts | TypeScript | https://github.com/drodreo/xacpp-ts |
+| xacpp-rs | Rust | https://github.com/drodreo/xacpp-rs |
 
 ## 许可
 
