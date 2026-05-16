@@ -1,16 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { login, type LoginOptions } from './login.js';
+import { login } from './login.js';
 
 const mockFetch = vi.fn<(...args: any[]) => Promise<Response>>();
 vi.stubGlobal('fetch', mockFetch);
-
-vi.mock('qrcode-terminal', () => ({
-  default: {
-    generate: vi.fn((_input: string, _opts: unknown, callback: (qr: string) => void) => {
-      callback('ASCII_QR_CODE');
-    }),
-  },
-}));
 
 function makeJsonResponse(data: unknown, status = 200): Response {
   return {
@@ -32,55 +24,36 @@ describe('login', () => {
   });
 
   // --------------------------------------------------------------------------
-  // image mode
+  // 正常流程
   // --------------------------------------------------------------------------
 
-  describe('image mode', () => {
-    it('gets QR code, outputs URL, polls confirmed, returns { token, baseUrl }', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeJsonResponse({
-          qrcode: 'qr_abc',
-          qrcode_img_content: 'https://img.url/qr.png',
-        }))
-        .mockResolvedValueOnce(makeJsonResponse({
-          status: 'confirmed',
-          bot_token: 'bot_tok_123',
-          baseurl: 'https://custom.weixin.qq.com',
-        }));
+  it('gets QR code, prompts, opens URL, polls confirmed, returns { token, baseUrl }', async () => {
+    mockFetch
+      .mockResolvedValueOnce(makeJsonResponse({
+        qrcode: 'qr_abc',
+        qrcode_img_content: 'https://img.url/qr.png',
+      }))
+      .mockResolvedValueOnce(makeJsonResponse({
+        status: 'confirmed',
+        bot_token: 'bot_tok_123',
+        baseurl: 'https://custom.weixin.qq.com',
+      }));
 
-      const output: string[] = [];
-      const opts: LoginOptions = { qrType: 'image', writer: (c) => output.push(c) };
-      const result = await login(opts);
+    const output: string[] = [];
+    const openUrl = vi.fn();
+    const readline = vi.fn().mockResolvedValue(undefined);
 
-      expect(result).toEqual({ token: 'bot_tok_123', baseUrl: 'https://custom.weixin.qq.com' });
-      expect(output.some((s) => s.includes('https://img.url/qr.png'))).toBe(true);
+    const result = await login({
+      writer: (c) => output.push(c),
+      readline,
+      openUrl,
     });
-  });
 
-  // --------------------------------------------------------------------------
-  // text mode
-  // --------------------------------------------------------------------------
-
-  describe('text mode', () => {
-    it('renders ASCII QR and returns result on confirmed', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeJsonResponse({
-          qrcode: 'qr_def',
-          qrcode_img_content: 'https://img.url/qr2.png',
-        }))
-        .mockResolvedValueOnce(makeJsonResponse({
-          status: 'confirmed',
-          bot_token: 'bot_tok_456',
-          baseurl: 'https://ilinkai.weixin.qq.com',
-        }));
-
-      const output: string[] = [];
-      const opts: LoginOptions = { qrType: 'text', writer: (c) => output.push(c) };
-      const result = await login(opts);
-
-      expect(result.token).toBe('bot_tok_456');
-      expect(output.some((s) => s.includes('请使用微信扫描上方二维码登录'))).toBe(true);
-    });
+    expect(result).toEqual({ token: 'bot_tok_123', baseUrl: 'https://custom.weixin.qq.com' });
+    expect(readline).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith('https://img.url/qr.png');
+    expect(output.some((s) => s.includes('按回车键在浏览器中打开二维码'))).toBe(true);
   });
 
   // --------------------------------------------------------------------------
@@ -96,29 +69,9 @@ describe('login', () => {
         }))
         .mockResolvedValueOnce(makeJsonResponse({ status: 'expired' }));
 
-      const opts: LoginOptions = { qrType: 'image' };
-      await expect(login(opts)).rejects.toThrow('QR code expired');
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // baseUrl fallback
-  // --------------------------------------------------------------------------
-
-  describe('baseUrl fallback', () => {
-    it('defaults to https://ilinkai.weixin.qq.com when baseurl omitted', async () => {
-      mockFetch
-        .mockResolvedValueOnce(makeJsonResponse({
-          qrcode: 'qr_no_base',
-          qrcode_img_content: 'https://img.url/qr.png',
-        }))
-        .mockResolvedValueOnce(makeJsonResponse({
-          status: 'confirmed',
-          bot_token: 'tok_789',
-        }));
-
-      const result = await login({ qrType: 'image' });
-      expect(result.baseUrl).toBe('https://ilinkai.weixin.qq.com');
+      await expect(
+        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+      ).rejects.toThrow('QR code expired');
     });
   });
 
@@ -139,8 +92,35 @@ describe('login', () => {
           baseurl: 'https://weixin.qq.com',
         }));
 
-      const result = await login({ qrType: 'image' });
+      const result = await login({
+        readline: vi.fn().mockResolvedValue(undefined),
+        openUrl: vi.fn(),
+      });
       expect(result.baseUrl).toBe('https://weixin.qq.com');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // baseUrl fallback
+  // --------------------------------------------------------------------------
+
+  describe('baseUrl fallback', () => {
+    it('defaults to https://ilinkai.weixin.qq.com when baseurl omitted', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          qrcode: 'qr_no_base',
+          qrcode_img_content: 'https://img.url/qr.png',
+        }))
+        .mockResolvedValueOnce(makeJsonResponse({
+          status: 'confirmed',
+          bot_token: 'tok_789',
+        }));
+
+      const result = await login({
+        readline: vi.fn().mockResolvedValue(undefined),
+        openUrl: vi.fn(),
+      });
+      expect(result.baseUrl).toBe('https://ilinkai.weixin.qq.com');
     });
   });
 
@@ -165,14 +145,17 @@ describe('login', () => {
         }));
 
       const output: string[] = [];
-      const opts: LoginOptions = { qrType: 'image', writer: (c) => output.push(c) };
-      const promise = login(opts);
+      const promise = login({
+        writer: (c) => output.push(c),
+        readline: vi.fn().mockResolvedValue(undefined),
+        openUrl: vi.fn(),
+      });
 
       await vi.advanceTimersByTimeAsync(4_000);
       const result = await promise;
 
       expect(result.token).toBe('tok_multi');
-      expect(output.some((s) => s.includes('已扫码，等待确认'))).toBe(true);
+      expect(output.some((s) => s.includes('已扫码，请在手机上确认'))).toBe(true);
     });
   });
 
@@ -184,8 +167,9 @@ describe('login', () => {
     it('throws when get_bot_qrcode fails', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
-      const opts: LoginOptions = { qrType: 'image' };
-      await expect(login(opts)).rejects.toThrow('Network error');
+      await expect(
+        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+      ).rejects.toThrow('Network error');
     });
 
     it('throws when get_qrcode_status fails', async () => {
@@ -196,8 +180,9 @@ describe('login', () => {
         }))
         .mockRejectedValueOnce(new Error('Status poll error'));
 
-      const opts: LoginOptions = { qrType: 'image' };
-      await expect(login(opts)).rejects.toThrow('Status poll error');
+      await expect(
+        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+      ).rejects.toThrow('Status poll error');
     });
   });
 });

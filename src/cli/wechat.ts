@@ -24,11 +24,9 @@ export function registerWechat(program: Command): void {
 
   wechat
     .command('login')
-    .option('--qr-type <type>', 'QR code display mode (image|text)', 'image')
     .description('Login via QR code scan, outputs { token, baseUrl } to stdout')
-    .action(async (opts) => {
-      const qrType = opts.qrType === 'text' ? 'text' : 'image';
-      const result = await login({ qrType });
+    .action(async () => {
+      const result = await login();
       process.stdout.write(JSON.stringify(result) + '\n');
     });
 

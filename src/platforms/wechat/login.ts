@@ -1,5 +1,5 @@
-import qrcodeTerminal from 'qrcode-terminal';
-const generateQRCode = qrcodeTerminal.generate;
+import { exec } from 'node:child_process';
+import process from 'node:process';
 
 export interface LoginResult {
   token: string;
@@ -7,10 +7,12 @@ export interface LoginResult {
 }
 
 export interface LoginOptions {
-  /** 二维码展示方式 */
-  qrType: 'image' | 'text';
   /** 输出 writer，默认 process.stderr.write */
   writer?: (chunk: string) => void;
+  /** 等待用户输入，默认从 stdin 读一行 */
+  readline?: () => Promise<void>;
+  /** 打开 URL，默认调用系统浏览器 */
+  openUrl?: (url: string) => void;
 }
 
 const BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -27,6 +29,13 @@ interface QRCodeStatusResponse {
   baseurl?: string;
   ilink_bot_id?: string;
   ilink_user_id?: string;
+}
+
+function defaultOpenUrl(url: string): void {
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'start'
+    : 'xdg-open';
+  exec(`${cmd} "${url}"`);
 }
 
 async function getQRCode(): Promise<QRCodeResponse> {
@@ -50,26 +59,27 @@ async function pollQRCodeStatus(qrcode: string): Promise<QRCodeStatusResponse> {
 /**
  * 执行扫码登录。
  * 1. 获取二维码
- * 2. 展示（image=URL, text=ASCII）
+ * 2. 提示用户按回车打开浏览器
  * 3. 轮询扫码状态
  * 4. confirmed 后返回 { token, baseUrl }
  */
-export async function login(options: LoginOptions): Promise<LoginResult> {
-  const writer = options.writer ?? ((chunk: string) => process.stderr.write(chunk));
+export async function login(options?: LoginOptions): Promise<LoginResult> {
+  const writer = options?.writer ?? ((chunk: string) => process.stderr.write(chunk));
+  const rl = options?.readline ?? (async () => {
+    const { createInterface } = await import('node:readline');
+    const iface = createInterface({ input: process.stdin });
+    await iface[Symbol.asyncIterator]().next();
+    iface.close();
+  });
+  const open = options?.openUrl ?? defaultOpenUrl;
 
   const { qrcode, qrcode_img_content } = await getQRCode();
 
-  if (options.qrType === 'text') {
-    await new Promise<void>((resolve) => {
-      generateQRCode(qrcode_img_content, { small: true }, (qr: string) => {
-        writer(qr + '\n');
-        resolve();
-      });
-    });
-    writer('请使用微信扫描上方二维码登录\n');
-  } else {
-    writer(`请打开以下链接并在浏览器中扫描二维码登录:\n${qrcode_img_content}\n`);
-  }
+  writer('请使用微信扫描二维码登录\n');
+  writer('按回车键在浏览器中打开二维码...\n');
+  await rl();
+  open(qrcode_img_content);
+  writer('等待扫码中...\n');
 
   let scanned = false;
   while (true) {
@@ -91,7 +101,7 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
 
     if (status.status === 'scaned' && !scanned) {
       scanned = true;
-      writer('已扫码，等待确认...\n');
+      writer('已扫码，请在手机上确认...\n');
     }
 
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
