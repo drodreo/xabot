@@ -313,6 +313,191 @@ describe('Bridge', () => {
     });
   });
 
+  it('/new clears chatToActivity and creates new activity without invoke', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-old', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' });
+
+    cloudMessagesIter.push(msg(chatA, 'first'));
+    cloudMessagesIter.push(msg(chatA, '/new'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
+      invoke_activity: { activity: 'act-old', messages: [{ type: 'text', text: 'first' }] },
+    });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, { new_activity: { title: '' } });
+  });
+
+  it('/new 你好 creates activity then invokes with prompt', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, '/new 你好'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+      invoke_activity: { activity: 'act-new', messages: [{ type: 'text', text: '你好' }] },
+    });
+  });
+
+  it('/compact sends compact_activity for cached activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-cached', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, 'first'));
+    cloudMessagesIter.push(msg(chatA, '/compact'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
+      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] },
+    });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
+      compact_activity: { activity: 'act-cached' },
+    });
+  });
+
+  it('/compact without cached activityId and last_activity not_found skips', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+
+    cloudMessagesIter.push(msg(chatA, '/compact'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+  });
+
+  it('/compact without cache falls back to last_activity then sends compact_activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, '/compact'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+      compact_activity: { activity: 'act-last' },
+    });
+  });
+
+  it('/compact without cache and last_activity not_found sends prompt to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+    cloudSend.mockResolvedValue(messageId('mid-1'));
+
+    cloudMessagesIter.push(msg(chatA, '/compact'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '当前暂无活动中的对话' });
+  });
+
+  it('/cancel without cache falls back to last_activity then sends cancel_activity', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(chatA, '/cancel'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
+      cancel_activity: { activity: 'act-last' },
+    });
+  });
+
+  it('/cancel without cache and last_activity not_found sends prompt to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+    cloudSend.mockResolvedValue(messageId('mid-1'));
+
+    cloudMessagesIter.push(msg(chatA, '/cancel'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '当前暂无活动中的对话' });
+  });
+
+  it('/comapct typo sends unknown command hint to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+    cloudSend.mockResolvedValue(messageId('mid-1'));
+
+    cloudMessagesIter.push(msg(chatA, '/comapct'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    expect(sessionRequestCommand).not.toHaveBeenCalled();
+    expect(cloudSend).toHaveBeenCalledWith(chatA, {
+      type: 'text',
+      text: '未知命令: /comapct，支持的命令: /new, /compact, /cancel',
+    });
+  });
+
   // ── Agent → Cloud (via handleEvent) ─────────────────────────────────────
   // The chatId↔activityId mapping is established through the run() path.
   // For handleEvent tests, we pre-populate by running a cloud message first.

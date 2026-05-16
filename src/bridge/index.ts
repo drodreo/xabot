@@ -1,6 +1,7 @@
 import type { ChannelId } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
 import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart } from 'xacpp';
+import { parseInput } from './input-parser.js';
 
 /**
  * Bridge — bidirectional message loop between cloud platform and XACPP agents.
@@ -195,15 +196,110 @@ export class Bridge {
 
         const chatId = msg.chatId;
 
-        // Find or create activityId
+        // ── Text messages: parse and dispatch by kind ─────────────────────
+        if (msg.content.type === 'text') {
+          const parsed = parseInput(msg.content.text);
+          switch (parsed.kind) {
+            case 'new': {
+              this.chatToActivity.delete(chatId);
+              const createResponse = await this.session.requestCommand({
+                new_activity: { title: '' },
+              });
+              if (createResponse.kind === 'activity_ready') {
+                const newActivityId = createResponse.activity;
+                this.chatToActivity.set(chatId, newActivityId);
+                if (parsed.prompt) {
+                  await this.session.requestCommand({
+                    invoke_activity: {
+                      activity: newActivityId,
+                      messages: [{ type: 'text', text: parsed.prompt }],
+                    },
+                  });
+                }
+              }
+              continue;
+            }
+
+            case 'compact': {
+              let activityId = this.chatToActivity.get(chatId);
+              if (!activityId) {
+                const lastResponse = await this.session.requestCommand('last_activity');
+                if (lastResponse.kind === 'activity_ready') {
+                  activityId = lastResponse.activity;
+                  this.chatToActivity.set(chatId, activityId);
+                } else {
+                  await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
+                  continue;
+                }
+              }
+              await this.session.requestCommand({
+                compact_activity: { activity: activityId },
+              });
+              continue;
+            }
+
+            case 'cancel': {
+              let activityId = this.chatToActivity.get(chatId);
+              if (!activityId) {
+                const lastResponse = await this.session.requestCommand('last_activity');
+                if (lastResponse.kind === 'activity_ready') {
+                  activityId = lastResponse.activity;
+                  this.chatToActivity.set(chatId, activityId);
+                } else {
+                  await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
+                  continue;
+                }
+              }
+              await this.session.requestCommand({
+                cancel_activity: { activity: activityId },
+              });
+              continue;
+            }
+
+            case 'unknown_command': {
+              await this.cloud.send(chatId, {
+                type: 'text',
+                text: `未知命令: ${parsed.command}，支持的命令: /new, /compact, /cancel`,
+              });
+              continue;
+            }
+
+            case 'invoke': {
+              let activityId = this.chatToActivity.get(chatId);
+              if (!activityId) {
+                const lastResponse = await this.session.requestCommand('last_activity');
+                if (lastResponse.kind === 'activity_ready') {
+                  activityId = lastResponse.activity;
+                } else {
+                  const createResponse = await this.session.requestCommand({
+                    new_activity: { title: '' },
+                  });
+                  if (createResponse.kind === 'activity_ready') {
+                    activityId = createResponse.activity;
+                  } else {
+                    continue;
+                  }
+                }
+                this.chatToActivity.set(chatId, activityId);
+              }
+              await this.session.requestCommand({
+                invoke_activity: {
+                  activity: activityId,
+                  messages: [{ type: 'text', text: parsed.text }],
+                },
+              });
+              continue;
+            }
+          }
+        }
+
+        // ── Non-text messages: existing behavior ──────────────────────────
         let activityId = this.chatToActivity.get(chatId);
         if (!activityId) {
-          // Try to recover the last activity first
           const lastResponse = await this.session.requestCommand('last_activity');
           if (lastResponse.kind === 'activity_ready') {
             activityId = lastResponse.activity;
           } else {
-            // No recent activity — create a new one
             const createResponse = await this.session.requestCommand({
               new_activity: { title: '' },
             });
@@ -216,11 +312,8 @@ export class Bridge {
           this.chatToActivity.set(chatId, activityId);
         }
 
-        // Build ContentPart
         const parts: ContentPart[] = [];
-        if (msg.content.type === 'text') {
-          parts.push({ type: 'text', text: msg.content.text });
-        } else if (msg.content.type === 'image') {
+        if (msg.content.type === 'image') {
           parts.push({
             type: 'image',
             source: { remoteUrl: msg.content.url, localUri: '', mimeType: 'image/*', sizeBytes: 0 },
