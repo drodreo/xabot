@@ -1,140 +1,120 @@
 import { describe, it, expect } from 'vitest';
-import { toStandardMessage, fromMessageContent } from './message.js';
-import { channelId } from '../../core/types.js';
+import { toStandardMessage, fromMessageContent, extractContextToken, extractText } from './message.js';
 
 describe('toStandardMessage', () => {
-  it('converts a text message event', () => {
-    const event = {
-      msgId: 'msg_123',
-      fromUserName: 'user_alice',
-      toUserName: 'bot_channel',
-      msgType: 'text',
-      content: 'hello there',
-      createTime: 1700000000,
+  it('converts a text message', () => {
+    const msg = {
+      from_user_id: 'user_alice',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_1',
+      item_list: [{ type: 1, text_item: { text: 'hello' } }],
+      msg_id: 'msg_123',
     };
 
-    const msg = toStandardMessage(event);
-
-    expect(msg.id).toBe('msg_123');
-    expect(msg.chatId).toBe('bot_channel');
-    expect(msg.senderId).toBe('user_alice');
-    expect(msg.content).toEqual({ type: 'text', text: 'hello there' });
-    expect(msg.direction).toBe('incoming');
+    const result = toStandardMessage(msg);
+    expect(result.id).toBe('msg_123');
+    expect(result.chatId).toBe('user_alice');
+    expect(result.senderId).toBe('user_alice');
+    expect(result.content).toEqual({ type: 'text', text: 'hello' });
+    expect(result.direction).toBe('incoming');
   });
 
-  it('converts an image message event', () => {
-    const event = {
-      msgId: 'msg_456',
-      fromUserName: 'user_bob',
-      toUserName: 'bot_channel',
-      msgType: 'image',
-      content: '',
-      mediaUrl: 'https://cdn.example.com/img.jpg',
-      createTime: 1700000001,
+  it('converts an image message', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_2',
+      item_list: [{ type: 2, image_item: { cdn: { download_url: 'https://cdn.example.com/img.jpg' } } }],
+      msg_id: 'msg_456',
     };
 
-    const msg = toStandardMessage(event);
-
-    expect(msg.id).toBe('msg_456');
-    expect(msg.content).toEqual({
-      type: 'image',
-      url: 'https://cdn.example.com/img.jpg',
-    });
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'image', url: 'https://cdn.example.com/img.jpg' });
   });
 
-  it('converts a file message event', () => {
-    const event = {
-      msgId: 'msg_789',
-      fromUserName: 'user_carol',
-      toUserName: 'bot_channel',
-      msgType: 'file',
-      content: 'report.pdf',
-      mediaUrl: 'https://cdn.example.com/report.pdf',
-      createTime: 1700000002,
+  it('converts a file message', () => {
+    const msg = {
+      from_user_id: 'user_carol',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_3',
+      item_list: [{ type: 4, file_item: { file_name: 'report.pdf', cdn: { download_url: 'https://cdn.example.com/report.pdf' } } }],
+      msg_id: 'msg_789',
     };
 
-    const msg = toStandardMessage(event);
-
-    expect(msg.content).toEqual({
-      type: 'file',
-      url: 'https://cdn.example.com/report.pdf',
-      name: 'report.pdf',
-    });
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'file', url: 'https://cdn.example.com/report.pdf', name: 'report.pdf' });
   });
 
-  it('handles missing msgId by generating a fallback id', () => {
-    const event = {
-      fromUserName: 'user_dave',
-      toUserName: 'bot_channel',
-      msgType: 'text',
-      content: 'no id here',
+  it('handles unknown item type as fallback', () => {
+    const msg = {
+      from_user_id: 'user_dave',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_4',
+      item_list: [{ type: 99, unknown: {} } as any],
+      msg_id: 'msg_unknown',
     };
 
-    const msg = toStandardMessage(event);
-
-    expect(msg.id).toMatch(/\d+/);
-    expect(msg.content).toEqual({ type: 'text', text: 'no id here' });
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[unsupported]' });
   });
 
-  it('handles unknown msgType as text fallback', () => {
-    const event = {
-      msgId: 'msg_unknown',
-      fromUserName: 'user_eve',
-      toUserName: 'bot_channel',
-      msgType: 'unknown_type',
-      content: 'raw event data',
+  it('handles missing msg_id with timestamp fallback', () => {
+    const msg = {
+      from_user_id: 'user_eve',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_5',
+      item_list: [{ type: 1, text_item: { text: 'no id' } }],
     };
 
-    const msg = toStandardMessage(event);
-
-    expect(msg.content).toEqual({ type: 'text', text: 'raw event data' });
+    const result = toStandardMessage(msg);
+    expect(result.id).toMatch(/\d+/);
+    expect(result.content).toEqual({ type: 'text', text: 'no id' });
   });
 });
 
 describe('fromMessageContent', () => {
-  it('converts a text content to wechat body', () => {
-    const body = fromMessageContent('user_alice', { type: 'text', text: 'hello world' });
-
-    expect(body).toEqual({
-      toUser: 'user_alice',
-      msgType: 'text',
-      content: 'hello world',
-      mediaUrl: undefined,
-    });
+  it('converts text to send request', () => {
+    const req = fromMessageContent('user_alice', { type: 'text', text: 'hello' }, 'ctx_send');
+    expect(req.msg.to_user_id).toBe('user_alice');
+    expect(req.msg.message_type).toBe(2);
+    expect(req.msg.message_state).toBe(2);
+    expect(req.msg.context_token).toBe('ctx_send');
+    expect(req.msg.item_list).toEqual([{ type: 1, text_item: { text: 'hello' } }]);
+    expect(req.base_info).toEqual({ channel_version: '1' });
+    expect(req.msg.client_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
-  it('converts an image content to wechat body', () => {
-    const body = fromMessageContent('user_bob', {
-      type: 'image',
-      url: 'https://cdn.example.com/photo.png',
-    });
-
-    expect(body).toEqual({
-      toUser: 'user_bob',
-      msgType: 'image',
-      content: 'https://cdn.example.com/photo.png',
-      mediaUrl: 'https://cdn.example.com/photo.png',
-    });
+  it('converts image to text fallback', () => {
+    const req = fromMessageContent('user_bob', { type: 'image', url: 'https://cdn.example.com/photo.png' }, 'ctx_img');
+    expect(req.msg.item_list).toEqual([{ type: 1, text_item: { text: '[image]' } }]);
   });
 
-  it('converts a file content to wechat body', () => {
-    const body = fromMessageContent('user_carol', {
-      type: 'file',
-      url: 'https://cdn.example.com/doc.pdf',
-      name: 'doc.pdf',
-    });
+  it('converts file to text fallback', () => {
+    const req = fromMessageContent('user_carol', { type: 'file', url: 'https://cdn.example.com/doc.pdf', name: 'doc.pdf' }, 'ctx_file');
+    expect(req.msg.item_list).toEqual([{ type: 1, text_item: { text: '[file: doc.pdf]' } }]);
+  });
+});
 
-    expect(body).toEqual({
-      toUser: 'user_carol',
-      msgType: 'file',
-      content: 'doc.pdf',
-      mediaUrl: 'https://cdn.example.com/doc.pdf',
-    });
+describe('extractContextToken', () => {
+  it('returns context_token', () => {
+    const msg = { context_token: 'ctx_abc' } as any;
+    expect(extractContextToken(msg)).toBe('ctx_abc');
+  });
+});
+
+describe('extractText', () => {
+  it('returns first text item text', () => {
+    const msg = { item_list: [{ type: 1, text_item: { text: 'hello' } }] } as any;
+    expect(extractText(msg)).toBe('hello');
   });
 
-  it('uses chatId as toUser', () => {
-    const body = fromMessageContent(channelId('oc_chat1'), { type: 'text', text: 'ping' });
-
-    expect(body.toUser).toBe('oc_chat1');
+  it('returns empty string when no text item', () => {
+    const msg = { item_list: [{ type: 2, image_item: { cdn: { download_url: '' } } }] } as any;
+    expect(extractText(msg)).toBe('');
   });
 });

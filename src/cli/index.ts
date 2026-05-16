@@ -12,6 +12,7 @@
 
 import { Command } from 'commander';
 import { registerFeishu } from './feishu.js';
+import { registerWechat } from './wechat.js';
 
 const program = new Command();
 
@@ -20,7 +21,8 @@ program
   .description(`xabot — bot bridge CLI
 
 Platform subcommands:
-  feishu    Feishu (Lark) platform commands`)
+  feishu    Feishu (Lark) platform commands
+  wechat    WeChat (iLink Bot) platform commands`)
   .addHelpText(
     'after',
     `Examples:
@@ -28,10 +30,17 @@ Platform subcommands:
   xabot feishu --app-id cli --app-secret secret send och_xxx "Hello!"
   xabot feishu --app-id cli --app-secret secret health
   xabot feishu --app-id cli --app-secret secret run
-  xabot feishu --app-id cli --app-secret secret chat`,
+  xabot feishu --app-id cli --app-secret secret chat
+
+  xabot wechat --token abc123 listen --chat-id xxx
+  xabot wechat --token abc123 send uid_xxx "Hello!"
+  xabot wechat --token abc123 health
+  xabot wechat --token abc123 run
+  xabot wechat --token abc123 chat`,
   );
 
 registerFeishu(program);
+registerWechat(program);
 
 program.parseAsync(process.argv).then(
   () => process.exit(0),

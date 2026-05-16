@@ -17,20 +17,13 @@ function makeJsonResponse(data: unknown, status = 200): Response {
   } as Response;
 }
 
-/** Returns a promise that never resolves — used tosimulate a hanging long-poll. */
-const hangingPoll = (): Promise<Response> =>
-  new Promise<Response>(() => {});
-
-// --------------------------------------------------------------------------
-// Test helpers
-// --------------------------------------------------------------------------
+const hangingPoll = (): Promise<Response> => new Promise<Response>(() => {});
 
 function makeConfig(overrides?: Partial<WechatConfig>): WechatConfig {
   return {
-    appId: 'wx_app_id',
-    appSecret: 'wx_secret',
+    token: 'test_token',
+    baseUrl: 'https://ilinkai.weixin.qq.com',
     longPollTimeoutMs: 5000,
-    baseUrl: 'https://api.ilink.bot',
     ...overrides,
   };
 }
@@ -43,10 +36,12 @@ describe('WechatClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetch.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   // --------------------------------------------------------------------------
@@ -60,18 +55,20 @@ describe('WechatClient', () => {
     });
 
     it('uses default baseUrl when not provided', () => {
-      const client = new WechatClient({ appId: 'a', appSecret: 'b' });
-      expect((client as any).baseUrl).toBe('https://api.ilink.bot');
+      const client = new WechatClient({ token: 't' });
+      expect((client as any).baseUrl).toBe('https://ilinkai.weixin.qq.com');
     });
 
     it('uses custom baseUrl when provided', () => {
-      const client = new WechatClient(makeConfig({ baseUrl: 'https://custom.api' }));
-      expect((client as any).baseUrl).toBe('https://custom.api');
+      const client = new WechatClient(makeConfig({ baseUrl: 'https://custom.url' }));
+      expect((client as any).baseUrl).toBe('https://custom.url');
     });
 
-    it('defaults longPollTimeoutMs to 35000', () => {
-      const client = new WechatClient({ appId: 'a', appSecret: 'b' });
-      expect((client as any).pollTimeoutMs).toBe(35000);
+    it('generates xWechatUin as base64 string', () => {
+      const client = new WechatClient(makeConfig());
+      const uin = (client as any).xWechatUin as string;
+      expect(uin).toMatch(/^[A-Za-z0-9+/=]+$/);
+      expect(Buffer.from(uin, 'base64').length).toBe(4);
     });
   });
 
@@ -80,64 +77,159 @@ describe('WechatClient', () => {
   // --------------------------------------------------------------------------
 
   describe('connect()', () => {
-    it('POSTs credentials to /api/auth/token and stores the access token', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token_abc' }));
+    it('sets connected=true and starts pollLoop', async () => {
       mockFetch.mockImplementationOnce(hangingPoll);
-
       const client = new WechatClient(makeConfig());
       await client.connect();
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.ilink.bot/api/auth/token',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ appId: 'wx_app_id', appSecret: 'wx_secret' }),
-        }),
-      );
+      expect((client as any).connected).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0]![0]).toBe('https://ilinkai.weixin.qq.com/ilink/bot/getupdates');
+      await client.close();
     });
 
-    it('is idempotent (multiple calls do not re-authenticate)', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token_abc' }));
+    it('is idempotent', async () => {
       mockFetch.mockImplementationOnce(hangingPoll);
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await client.connect();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      await client.close();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // pollLoop()
+  // --------------------------------------------------------------------------
+
+  describe('pollLoop()', () => {
+    it('converts msgs to standard Messages and buffers them', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [{ type: 1, text_item: { text: 'hello' } }],
+            msg_id: 'msg_123',
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
 
       const client = new WechatClient(makeConfig());
       await client.connect();
-      await client.connect(); // should return immediately
 
-      // Only one auth call should have been made
-      expect(mockFetch).toHaveBeenCalledTimes(2); // auth + first poll
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const result = await iter.next();
+
+      expect(result.done).toBe(false);
+      expect(result.value.content).toEqual({ type: 'text', text: 'hello' });
+      expect(result.value.chatId).toBe('user_alice');
+      await client.close();
     });
 
-    it('starts long-polling immediately after auth', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token_xyz' }));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse([])); // first poll resolves
-      mockFetch.mockImplementationOnce(hangingPoll); // second poll hangs
+    it('updates getUpdatesBuf on empty msgs', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({ ret: 0, get_updates_buf: 'next_buf', msgs: [] }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect((client as any).getUpdatesBuf).toBe('next_buf');
+      await client.close();
+    });
+
+    it('caches context_token per from_user_id', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_bob',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_bob',
+            item_list: [{ type: 1, text_item: { text: 'hi' } }],
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect((client as any).contextTokenStore.get('user_bob')).toBe('ctx_bob');
+      await client.close();
+    });
+
+    it('skips non-USER messages (message_type !== 1)', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_bot',
+            to_user_id: 'bot_123',
+            message_type: 2,
+            context_token: 'ctx_bot',
+            item_list: [{ type: 1, text_item: { text: 'bot msg' } }],
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const timeout = Promise.race([
+        iter.next(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 50)),
+      ]);
+      await expect(timeout).rejects.toThrow('timeout');
+      await client.close();
+    });
+
+    it('aborts on errcode === -14', async () => {
+      mockFetch.mockResolvedValueOnce(makeJsonResponse({ ret: -1, errcode: -14 }));
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect((client as any).abortCtrl).toBeNull();
+      expect((client as any).connected).toBe(false);
+    });
+
+    it('retries on poll error', async () => {
+      mockFetch
+        .mockRejectedValueOnce(new Error('HTTP 500'))
+        .mockResolvedValueOnce(makeJsonResponse({ ret: 0, get_updates_buf: 'ok', msgs: [] }))
+        .mockImplementationOnce(hangingPoll);
 
       const client = new WechatClient(makeConfig());
       await client.connect();
 
-      // The second fetch call should be the first long-poll request
-      expect(mockFetch.mock.calls[1]![0]).toBe(
-        'https://api.ilink.bot/api/messages?timeout=5000',
-      );
-      expect((mockFetch.mock.calls[1]![1] as Record<string, unknown>).method).toBe('GET');
+      await new Promise((r) => setTimeout(r, 1500));
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      await client.close();
     });
 
-    it('throws when auth fails with non-ok status', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'bad creds' }, 401));
+    it('throws on 401 without retry', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('HTTP 401 Unauthorized'));
 
       const client = new WechatClient(makeConfig());
-      await expect(client.connect()).rejects.toThrow('WechatClient auth failed');
-    });
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 50));
 
-    it('throws when auth response has no access token', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({}));
-
-      const client = new WechatClient(makeConfig());
-      await expect(client.connect()).rejects.toThrow(
-        'WechatClient auth failed: no access token',
-      );
+      expect((client as any).connected).toBe(false);
     });
   });
 
@@ -146,86 +238,63 @@ describe('WechatClient', () => {
   // --------------------------------------------------------------------------
 
   describe('send()', () => {
-    it('POSTs a text message to /api/messages/send with correct body', async () => {
-      // Mock sequence:
-      // 1. Auth token → resolved (pollLoop consumes during connect)
-      // 2. First poll → hang forever (pollLoop waits on this)
-      // 3. Send → msgId response
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockImplementationOnce(hangingPoll); // first poll hangs
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ msgId: 'sent_001' }));
+    it('POSTs correct body to /ilink/bot/sendmessage', async () => {
+      mockFetch
+        .mockImplementationOnce(hangingPoll)
+        .mockResolvedValueOnce(makeJsonResponse({ ret: 0, msg: { client_id: 'sent_001' } }));
 
       const client = new WechatClient(makeConfig());
       await client.connect();
-      const result = await client.send(channelId('user_alice'), {
-        type: 'text',
-        text: 'hello from bot',
-      });
+      (client as any).contextTokenStore.set('user_alice', 'ctx_alice');
+
+      const result = await client.send(channelId('user_alice'), { type: 'text', text: 'hello' });
 
       expect(result).toBe('sent_001');
-      // The third fetch call should be the send request
-      const sendCall = mockFetch.mock.calls[2]!;
-      expect(sendCall[0]).toBe('https://api.ilink.bot/api/messages/send');
-      const req = sendCall[1] as Record<string, unknown>;
-      expect(JSON.parse(req.body as string)).toEqual({
-        toUser: 'user_alice',
-        msgType: 'text',
-        content: 'hello from bot',
-      });
+      const sendCall = mockFetch.mock.calls[1]!;
+      expect(sendCall[0]).toBe('https://ilinkai.weixin.qq.com/ilink/bot/sendmessage');
+      const body = JSON.parse((sendCall[1] as any).body);
+      expect(body.msg.to_user_id).toBe('user_alice');
+      expect(body.msg.context_token).toBe('ctx_alice');
+      expect(body.msg.item_list).toEqual([{ type: 1, text_item: { text: 'hello' } }]);
+      expect(body.base_info).toEqual({ channel_version: '1' });
+      await client.close();
     });
 
-    it('includes mediaUrl for image messages', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockImplementationOnce(hangingPoll); // first poll hangs
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ msgId: 'sent_img' }));
+    it('uses empty context_token when not cached', async () => {
+      mockFetch
+        .mockImplementationOnce(hangingPoll)
+        .mockResolvedValueOnce(makeJsonResponse({ ret: 0, msg: { client_id: 'sent_002' } }));
 
       const client = new WechatClient(makeConfig());
       await client.connect();
-      await client.send(channelId('user_bob'), {
-        type: 'image',
-        url: 'https://cdn.example.com/photo.png',
-      });
 
-      const sendCall = mockFetch.mock.calls[2]!;
-      expect(sendCall[0]).toBe('https://api.ilink.bot/api/messages/send');
-      const req = sendCall[1] as Record<string, unknown>;
-      expect(JSON.parse(req.body as string)).toMatchObject({
-        toUser: 'user_bob',
-        msgType: 'image',
-        content: 'https://cdn.example.com/photo.png',
-        mediaUrl: 'https://cdn.example.com/photo.png',
-      });
+      await client.send(channelId('user_unknown'), { type: 'text', text: 'hi' });
+
+      const sendCall = mockFetch.mock.calls[1]!;
+      const body = JSON.parse((sendCall[1] as any).body);
+      expect(body.msg.context_token).toBe('');
+      await client.close();
     });
 
-    it('throws when send returns non-ok status', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockImplementationOnce(hangingPoll);
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'server error' }, 500));
+    it('throws when ret !== 0', async () => {
+      mockFetch
+        .mockImplementationOnce(hangingPoll)
+        .mockResolvedValueOnce(makeJsonResponse({ ret: -1, errcode: 10003 }));
 
       const client = new WechatClient(makeConfig());
       await client.connect();
+
       await expect(
-        client.send(channelId('user_alice'), { type: 'text', text: 'test' }),
-      ).rejects.toThrow('WechatClient send failed: HTTP 500');
-    });
-
-    it('throws when send response has no msgId', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockImplementationOnce(hangingPoll);
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({}));
-
-      const client = new WechatClient(makeConfig());
-      await client.connect();
-      await expect(
-        client.send(channelId('user_alice'), { type: 'text', text: 'test' }),
-      ).rejects.toThrow('WechatClient send failed: no msgId');
+        client.send(channelId('user_alice'), { type: 'text', text: 'hello' }),
+      ).rejects.toThrow('WechatClient send failed');
+      await client.close();
     });
 
     it('throws when not connected', async () => {
       const client = new WechatClient(makeConfig());
       await expect(
-        client.send(channelId('user_alice'), { type: 'text', text: 'test' }),
-      ).rejects.toThrow('WechatClient: not authenticated');
+        client.send(channelId('user_alice'), { type: 'text', text: 'hello' }),
+      ).rejects.toThrow('not connected');
     });
   });
 
@@ -234,41 +303,58 @@ describe('WechatClient', () => {
   // --------------------------------------------------------------------------
 
   describe('messages()', () => {
-    it('returns an AsyncIterable', () => {
+    it('returns an AsyncIterable', async () => {
+      mockFetch.mockImplementationOnce(hangingPoll);
       const client = new WechatClient(makeConfig());
-      const iterable = client.messages();
-      expect(typeof (iterable as any)[Symbol.asyncIterator]).toBe('function');
+      await client.connect();
+
+      const msgs = client.messages();
+      expect(typeof msgs[Symbol.asyncIterator]).toBe('function');
+      await client.close();
     });
 
-    it('yields buffered messages via for-await-of', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockResolvedValueOnce(
-        makeJsonResponse([
-          {
-            msgId: 'poll_msg_001',
-            fromUserName: 'user_alice',
-            toUserName: 'bot_channel',
-            msgType: 'text',
-            content: 'hello from wechat',
-          },
-        ]),
-      );
-      mockFetch.mockImplementationOnce(hangingPoll);
+    it('yields buffered messages', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [{ type: 1, text_item: { text: 'hello' } }],
+            msg_id: 'msg_123',
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
 
       const client = new WechatClient(makeConfig());
       await client.connect();
 
-      const messages: any[] = [];
+      const msgs: import('../../core/types.js').Message[] = [];
       for await (const msg of client.messages()) {
-        messages.push(msg);
+        msgs.push(msg);
         break;
       }
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].content).toEqual({ type: 'text', text: 'hello from wechat' });
-      expect(messages[0].id).toBe('poll_msg_001');
-      expect(messages[0].chatId).toBe('bot_channel');
-      expect(messages[0].senderId).toBe('user_alice');
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.content).toEqual({ type: 'text', text: 'hello' });
+      await client.close();
+    });
+
+    it('returns done after close', async () => {
+      mockFetch.mockImplementationOnce(hangingPoll);
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const nextPromise = iter.next();
+
+      await client.close();
+
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
     });
   });
 
@@ -288,20 +374,17 @@ describe('WechatClient', () => {
   // --------------------------------------------------------------------------
 
   describe('healthCheck()', () => {
-    it('resolves when connected', async () => {
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
+    it('passes when connected', async () => {
       mockFetch.mockImplementationOnce(hangingPoll);
-
       const client = new WechatClient(makeConfig());
       await client.connect();
       await expect(client.healthCheck()).resolves.toBeUndefined();
+      await client.close();
     });
 
     it('throws when not connected', async () => {
       const client = new WechatClient(makeConfig());
-      await expect(client.healthCheck()).rejects.toThrow(
-        'WechatClient not connected',
-      );
+      await expect(client.healthCheck()).rejects.toThrow('not connected');
     });
   });
 
@@ -310,161 +393,38 @@ describe('WechatClient', () => {
   // --------------------------------------------------------------------------
 
   describe('close()', () => {
-    it('stops the polling loop and marks client as disconnected', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
+    it('stops polling and marks disconnected', async () => {
       mockFetch.mockImplementationOnce(hangingPoll);
-
       const client = new WechatClient(makeConfig());
       await client.connect();
       await client.close();
 
-      await expect(client.healthCheck()).rejects.toThrow('WechatClient not connected');
+      expect((client as any).connected).toBe(false);
+      expect((client as any).abortCtrl).toBeNull();
     });
 
-    it('is safe to call when not connected', async () => {
-      const client = new WechatClient(makeConfig());
-      await client.close(); // must not throw
-      await client.close();
-    });
-
-    it('close() while messages() iterator is suspended causes iterator to return done:true', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      mockFetch.mockImplementationOnce(hangingPoll); // first poll hangs
-
-      const client = new WechatClient(makeConfig());
-      await client.connect();
-
-      const msgIter = client.messages()[Symbol.asyncIterator]();
-      const nextP = msgIter.next(); // iterator suspends waiting for message
-
-      await client.close();
-
-      const { done } = await nextP;
-      expect(done).toBe(true);
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // pollLoop HTTP error handling
-  // --------------------------------------------------------------------------
-
-  describe('pollLoop HTTP error handling', () => {
-    it('401 → refreshes token and continues polling without throwing', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      // Sequence: auth → poll(401) → token refresh → poll(empty) → poll(hangs)
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token_a' }));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'token expired' }, 401));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token_b' }));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse([]));
+    it('is idempotent', async () => {
       mockFetch.mockImplementationOnce(hangingPoll);
-
       const client = new WechatClient(makeConfig());
       await client.connect();
+      await client.close();
+      await client.close();
 
-      // Let 401 + token refresh + retry sequence play out
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Token refresh should have been called (not a poll call, separate fetch)
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.ilink.bot/api/auth/token',
-        expect.any(Object),
-      );
-
-      // Poll calls: poll1(401) + poll2(empty) + poll3(hanging) = 3
-      const pollCalls = mockFetch.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/messages'),
-      );
-      expect(pollCalls).toHaveLength(3);
-
-      // poll2 should use the refreshed token
-      expect((pollCalls[1]![1] as Record<string, unknown>).headers).toMatchObject({
-        Authorization: 'Bearer token_b',
-      });
+      expect((client as any).connected).toBe(false);
     });
 
-    it('403/404 → exits the polling loop without retrying', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      // Sequence: auth → poll(403) → loop exits
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token' }));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'forbidden' }, 403));
-      mockFetch.mockImplementationOnce(hangingPoll); // never reached
-
+    it('resolves pending iterator to done', async () => {
+      mockFetch.mockImplementationOnce(hangingPoll);
       const client = new WechatClient(makeConfig());
       await client.connect();
 
-      // Let the 403 response be processed
-      await vi.advanceTimersByTimeAsync(100);
-
-      // Only one poll call should have been made (loop exited via break, no retry)
-      const pollCalls = mockFetch.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/messages'),
-      );
-      expect(pollCalls).toHaveLength(1);
-      // The 403 Response was returned (status lives on the Response, not init)
-      // We verify the call was made to the poll endpoint
-      expect(pollCalls[0]![0]).toContain('/api/messages');
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const nextPromise = iter.next();
 
       await client.close();
-    });
 
-    it('500 → retries with back-off (throws to catch block)', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      // Sequence: auth → poll(500, back-off) → [after delay] poll(empty) → poll(hangs)
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'token' }));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'server error' }, 500));
-      mockFetch.mockResolvedValueOnce(makeJsonResponse([]));
-      mockFetch.mockImplementationOnce(hangingPoll);
-
-      const client = new WechatClient(makeConfig());
-      await client.connect();
-
-      // Advance past the initial back-off delay (1000ms)
-      await vi.advanceTimersByTimeAsync(1100);
-
-      // Poll calls: poll1(500) + poll2(empty) + poll3(hanging) = 3
-      const pollCalls = mockFetch.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/messages'),
-      );
-      expect(pollCalls).toHaveLength(3);
-      expect(pollCalls[0]![0]).toContain('/api/messages'); // first was poll, not token refresh
-
-      await client.close();
-    });
-  });
-
-  // --------------------------------------------------------------------------
-  // network error retry
-  // --------------------------------------------------------------------------
-
-  describe('network error retry', () => {
-    it('re-polls after a fetch network error', async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: false });
-
-      mockFetch.mockResolvedValueOnce(makeJsonResponse({ accessToken: 'tok' }));
-      // First poll throws
-      mockFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
-      // Second poll succeeds
-      mockFetch.mockResolvedValueOnce(makeJsonResponse([]));
-      mockFetch.mockImplementationOnce(hangingPoll);
-
-      const client = new WechatClient(makeConfig());
-      await client.connect();
-
-      // Advance timers to trigger the retry back-off
-      await vi.advanceTimersByTimeAsync(1100); // first back-off = 1000 ms
-
-      const pollCalls = mockFetch.mock.calls.filter(
-        ([url]) => typeof url === 'string' && url.includes('/api/messages'),
-      );
-      // At least: auth(1) + failed poll(1) + successful poll(1) = 3
-      expect(pollCalls.length).toBeGreaterThanOrEqual(2);
+      const result = await nextPromise;
+      expect(result.done).toBe(true);
     });
   });
 });
