@@ -74,11 +74,11 @@ export async function login(options?: LoginOptions): Promise<LoginResult> {
   let scanned = false;
   while (true) {
     const status = await pollQRCodeStatus(qrcode);
-
     if (status.status === 'confirmed') {
       if (!status.bot_token) {
         throw new Error('Login confirmed but no bot_token returned');
       }
+      writer('登录成功！请在微信输入配对码完成配对\n');
       return {
         token: status.bot_token,
         baseUrl: status.baseurl ?? BASE_URL,

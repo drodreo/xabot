@@ -12,8 +12,10 @@ import { parseInput } from './input-parser.js';
  *   back to the corresponding chatId.
  */
 export class Bridge {
-  private cloud: PlatformClient;
+  private cloud: PlatformClient | null = null;
   private readonly transport: XacppTransport;
+  private readonly cloudReady: Promise<void>;
+  private cloudReadyResolve: (() => void) | null = null;
 
   /** chatId → activityId */
   private readonly chatToActivity = new Map<ChannelId, string>();
@@ -36,14 +38,25 @@ export class Bridge {
   /** Reference to the establish handler — Phase 1 feeds discovered challenges to it. */
   private establishHandler: { submitChallenge(challenge: string, chatId: ChannelId): void } | null = null;
 
-  constructor(cloud: PlatformClient, transport: XacppTransport) {
-    this.cloud = cloud;
+  constructor(transport: XacppTransport, options?: { cloud?: PlatformClient }) {
     this.transport = transport;
+    if (options?.cloud) {
+      this.cloud = options.cloud;
+      this.cloudReady = Promise.resolve();
+    } else {
+      this.cloudReady = new Promise<void>((resolve) => {
+        this.cloudReadyResolve = resolve;
+      });
+    }
   }
 
   /** Replace the cloud PlatformClient (used after Establish login creates a new client). */
   replaceCloud(cloud: PlatformClient): void {
     this.cloud = cloud;
+    if (this.cloudReadyResolve) {
+      this.cloudReadyResolve();
+      this.cloudReadyResolve = null;
+    }
   }
 
   /** Call after establish succeeds to inject session reference. */
@@ -70,6 +83,7 @@ export class Bridge {
 
   /** Handle Command from downstream Agent (forwarded via XabotSessionHandler.onCommand). */
   async handleCommand(command: XacppCommand): Promise<XacppResponse> {
+    if (!this.cloud) return { kind: 'acknowledge' };
     if (typeof command === 'object' && 'message' in command) {
       const chatId = this.sessionChatId;
       if (!chatId) return { kind: 'acknowledge' };
@@ -89,6 +103,7 @@ export class Bridge {
 
   /** Handle Event from downstream Agent (forwarded via XabotSessionHandler.onEvent). */
   async handleEvent(_activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
+    if (!this.cloud) return { kind: 'acknowledge' };
     const chatId = this.sessionChatId;
 
     switch (event.event.type) {
@@ -189,11 +204,13 @@ export class Bridge {
   /** Cloud message loop: two-phase consumption. */
   async run(): Promise<void> {
     if (this.closed) return;
+    await this.cloudReady;
+    if (this.closed || !this.cloud) return;
 
     const { signal } = this.abortCtrl;
 
     try {
-      for await (const msg of this.cloud.messages()) {
+      for await (const msg of this.cloud!.messages()) {
         if (signal.aborted) break;
 
         // Phase 1: pre-establish — scan for challenge messages
@@ -365,8 +382,12 @@ export class Bridge {
       resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
     }
     this.pendingResponses.clear();
+    if (this.cloudReadyResolve) {
+      this.cloudReadyResolve();
+      this.cloudReadyResolve = null;
+    }
     await Promise.all([
-      this.cloud.close(),
+      this.cloud?.close(),
       this.transport.disconnect(),
     ]);
   }

@@ -100,16 +100,18 @@ describe('Bridge', () => {
     } as unknown as XacppTransport;
 
     bridge = new Bridge(
-      {
-        platform: 'mock',
-        connect: vi.fn().mockResolvedValue(undefined),
-        send: cloudSend,
-        messages: () => cloudMessagesIter.iter(),
-        streamCapability: vi.fn(),
-        healthCheck: vi.fn().mockResolvedValue(undefined),
-        close: cloudClose,
-      } as never,
       transport,
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+        } as never,
+      },
     );
   });
 
@@ -899,5 +901,49 @@ describe('Bridge', () => {
     const session = mockSession(sessionRequestCommand, 'och_456');
     bridge.setSession(session);
     expect((bridge as any).sessionChatId).toBe('och_456');
+  });
+
+  it('constructs without cloud, replaceCloud enables message consumption', async () => {
+    const transport = mockTransport();
+    const b = new Bridge(transport);
+
+    const newCloudSend = vi.fn().mockResolvedValue(messageId('mid-1'));
+    const newCloud = {
+      platform: 'mock',
+      connect: vi.fn().mockResolvedValue(undefined),
+      send: newCloudSend,
+      messages: () => cloudMessagesIter.iter(),
+      streamCapability: vi.fn(),
+      healthCheck: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as never;
+
+    b.replaceCloud(newCloud as never);
+    b.setSession(mockSession(sessionRequestCommand));
+    b.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
+      .mockResolvedValueOnce({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push(msg(channelId('chat-a'), 'delayed hello'));
+    cloudMessagesIter.stop();
+
+    await b.run();
+
+    expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
+  });
+
+  it('constructs without cloud, close during wait exits run safely', async () => {
+    const transport = mockTransport();
+    const b = new Bridge(transport);
+
+    // close before replaceCloud — run() should exit without error
+    const runPromise = b.run();
+    await b.close();
+    await runPromise;
+
+    expect(sessionRequestCommand).not.toHaveBeenCalled();
   });
 });

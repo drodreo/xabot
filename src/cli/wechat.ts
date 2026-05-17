@@ -7,20 +7,6 @@ import { chat } from './chat.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
-import type { PlatformClient } from '../core/client.js';
-import { StreamCapability } from '../core/types.js';
-
-/** Noop client used as a placeholder before Establish creates a real WechatClient. */
-const noopClient: PlatformClient = {
-  platform: 'wechat' as const,
-  async connect() { throw new Error('not initialized'); },
-  async send() { throw new Error('not initialized'); },
-  messages() { throw new Error('not initialized'); },
-  streamCapability() { return StreamCapability.NonStreaming; },
-  async healthCheck() { throw new Error('not initialized'); },
-  async close() { /* no-op */ },
-};
-
 export function registerWechat(program: Command): void {
   const wechat = program
     .command('wechat')
@@ -45,7 +31,7 @@ export function registerWechat(program: Command): void {
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
 
-      const bridge = new Bridge(noopClient, transport);
+      const bridge = new Bridge(transport);
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
 
@@ -75,9 +61,10 @@ export function registerWechat(program: Command): void {
 
   wechat
     .command('chat')
+    .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
-    .action(async () => {
-      await chat(noopClient, {
+    .action(async (opts) => {
+      const chatOpts: import('./chat.js').ChatOptions = {
         writer: (c) => process.stderr.write(c),
         loginFn: () => login(),
         cloudFactory: async (token, baseUrl) => {
@@ -88,6 +75,10 @@ export function registerWechat(program: Command): void {
           await client.connect();
           return client;
         },
-      });
+      };
+      if (opts.credentials) {
+        chatOpts.credentials = opts.credentials;
+      }
+      await chat(undefined, chatOpts);
     });
 }

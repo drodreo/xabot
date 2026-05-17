@@ -43,7 +43,7 @@ export interface ChatOptions {
  * @param cloud   - A connected PlatformClient.
  * @param options - Optional writer injection.
  */
-export async function chat(cloud: PlatformClient, options?: ChatOptions): Promise<void> {
+export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promise<void> {
   const writer = options?.writer ?? ((chunk: string) => process.stderr.write(chunk));
 
   writer('[chat] starting...\n');
@@ -98,7 +98,7 @@ export async function chat(cloud: PlatformClient, options?: ChatOptions): Promis
   const establishHandler = new XabotEstablishHandler();
   const responderPeer = new XacppPeer(responderTransport, establishHandler);
 
-  const bridge = new Bridge(cloud, responderTransport);
+  const bridge = new Bridge(responderTransport, cloud ? { cloud } : undefined);
   establishHandler.setBridge(bridge);
   bridge.setEstablishHandler(establishHandler);
 

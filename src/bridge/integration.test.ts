@@ -100,16 +100,18 @@ describe('Bridge integration', () => {
     } as unknown as XacppTransport;
 
     bridge = new Bridge(
-      {
-        platform: 'mock',
-        connect: vi.fn().mockResolvedValue(undefined),
-        send: cloudSendMock,
-        messages: () => cloudMessagesIter.iter(),
-        streamCapability: vi.fn(),
-        healthCheck: vi.fn().mockResolvedValue(undefined),
-        close: cloudCloseMock,
-      } as never,
       transport,
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSendMock,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          close: cloudCloseMock,
+        } as never,
+      },
     );
 
     const session = {

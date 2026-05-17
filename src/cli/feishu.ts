@@ -44,7 +44,7 @@ export function registerFeishu(program: Command): void {
       const establishHandler = new XabotEstablishHandler();
       const peer = new XacppPeer(transport, establishHandler);
 
-      const bridge = new Bridge(cloud, transport);
+      const bridge = new Bridge(transport, { cloud });
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
 
