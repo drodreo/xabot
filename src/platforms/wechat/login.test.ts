@@ -27,7 +27,7 @@ describe('login', () => {
   // 正常流程
   // --------------------------------------------------------------------------
 
-  it('gets QR code, prompts, opens URL, polls confirmed, returns { token, baseUrl }', async () => {
+  it('gets QR code, opens URL, polls confirmed, returns { token, baseUrl }', async () => {
     mockFetch
       .mockResolvedValueOnce(makeJsonResponse({
         qrcode: 'qr_abc',
@@ -41,19 +41,16 @@ describe('login', () => {
 
     const output: string[] = [];
     const openUrl = vi.fn();
-    const readline = vi.fn().mockResolvedValue(undefined);
 
     const result = await login({
       writer: (c) => output.push(c),
-      readline,
       openUrl,
     });
 
     expect(result).toEqual({ token: 'bot_tok_123', baseUrl: 'https://custom.weixin.qq.com' });
-    expect(readline).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledTimes(1);
     expect(openUrl).toHaveBeenCalledWith('https://img.url/qr.png');
-    expect(output.some((s) => s.includes('按回车键在浏览器中打开二维码'))).toBe(true);
+    expect(output.some((s) => s.includes('等待扫码中'))).toBe(true);
   });
 
   // --------------------------------------------------------------------------
@@ -70,7 +67,7 @@ describe('login', () => {
         .mockResolvedValueOnce(makeJsonResponse({ status: 'expired' }));
 
       await expect(
-        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+        login({ openUrl: vi.fn() }),
       ).rejects.toThrow('QR code expired');
     });
   });
@@ -92,10 +89,7 @@ describe('login', () => {
           baseurl: 'https://weixin.qq.com',
         }));
 
-      const result = await login({
-        readline: vi.fn().mockResolvedValue(undefined),
-        openUrl: vi.fn(),
-      });
+      const result = await login({ openUrl: vi.fn() });
       expect(result.baseUrl).toBe('https://weixin.qq.com');
     });
   });
@@ -116,10 +110,7 @@ describe('login', () => {
           bot_token: 'tok_789',
         }));
 
-      const result = await login({
-        readline: vi.fn().mockResolvedValue(undefined),
-        openUrl: vi.fn(),
-      });
+      const result = await login({ openUrl: vi.fn() });
       expect(result.baseUrl).toBe('https://ilinkai.weixin.qq.com');
     });
   });
@@ -147,7 +138,6 @@ describe('login', () => {
       const output: string[] = [];
       const promise = login({
         writer: (c) => output.push(c),
-        readline: vi.fn().mockResolvedValue(undefined),
         openUrl: vi.fn(),
       });
 
@@ -168,7 +158,7 @@ describe('login', () => {
       mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(
-        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+        login({ openUrl: vi.fn() }),
       ).rejects.toThrow('Network error');
     });
 
@@ -181,7 +171,7 @@ describe('login', () => {
         .mockRejectedValueOnce(new Error('Status poll error'));
 
       await expect(
-        login({ readline: vi.fn().mockResolvedValue(undefined), openUrl: vi.fn() }),
+        login({ openUrl: vi.fn() }),
       ).rejects.toThrow('Status poll error');
     });
   });

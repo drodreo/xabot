@@ -9,8 +9,6 @@ export interface LoginResult {
 export interface LoginOptions {
   /** 输出 writer，默认 process.stderr.write */
   writer?: (chunk: string) => void;
-  /** 等待用户输入，默认从 stdin 读一行 */
-  readline?: () => Promise<void>;
   /** 打开 URL，默认调用系统浏览器 */
   openUrl?: (url: string) => void;
 }
@@ -59,25 +57,17 @@ async function pollQRCodeStatus(qrcode: string): Promise<QRCodeStatusResponse> {
 /**
  * 执行扫码登录。
  * 1. 获取二维码
- * 2. 提示用户按回车打开浏览器
+ * 2. 自动打开浏览器
  * 3. 轮询扫码状态
  * 4. confirmed 后返回 { token, baseUrl }
  */
 export async function login(options?: LoginOptions): Promise<LoginResult> {
   const writer = options?.writer ?? ((chunk: string) => process.stderr.write(chunk));
-  const rl = options?.readline ?? (async () => {
-    const { createInterface } = await import('node:readline');
-    const iface = createInterface({ input: process.stdin });
-    await iface[Symbol.asyncIterator]().next();
-    iface.close();
-  });
   const open = options?.openUrl ?? defaultOpenUrl;
 
   const { qrcode, qrcode_img_content } = await getQRCode();
 
   writer('请使用微信扫描二维码登录\n');
-  writer('按回车键在浏览器中打开二维码...\n');
-  await rl();
   open(qrcode_img_content);
   writer('等待扫码中...\n');
 

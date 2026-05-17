@@ -24,6 +24,10 @@ export interface ChatOptions {
   writer?: (chunk: string) => void;
   /** Existing session credentials — skips challenge/pairing flow. */
   credentials?: string;
+  /** WeChat login function — called when no credentials to trigger QR scan. */
+  loginFn?: () => Promise<{ token: string; baseUrl: string }>;
+  /** Factory to create a cloud client after login. The returned client replaces the placeholder in Bridge. */
+  cloudFactory?: (token: string, baseUrl: string) => Promise<PlatformClient>;
 }
 
 /**
@@ -97,6 +101,16 @@ export async function chat(cloud: PlatformClient, options?: ChatOptions): Promis
   const bridge = new Bridge(cloud, responderTransport);
   establishHandler.setBridge(bridge);
   bridge.setEstablishHandler(establishHandler);
+
+  if (options?.loginFn) {
+    establishHandler.setLoginFn(options.loginFn);
+  }
+  if (options?.cloudFactory) {
+    establishHandler.setEnsureCloudFn(async (token, baseUrl) => {
+      const client = await options.cloudFactory!(token, baseUrl);
+      bridge.replaceCloud(client);
+    });
+  }
 
   establishHandler.onEstablished((_t, sessionId, credentials: string) => {
     const session = new XacppSession(responderTransport, sessionId, credentials);

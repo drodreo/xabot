@@ -31,10 +31,9 @@ Platform subcommands:
   xabot feishu --app-id cli --app-secret secret run
   xabot feishu --app-id cli --app-secret secret chat
 
-  xabot wechat login
-  xabot wechat --token ilinkbot_xxx health
-  xabot wechat --token ilinkbot_xxx run
-  xabot wechat --token ilinkbot_xxx chat`,
+  xabot wechat health --token ilinkbot_xxx
+  xabot wechat run
+  xabot wechat chat`,
   );
 
 registerFeishu(program);

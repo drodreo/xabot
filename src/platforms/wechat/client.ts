@@ -12,6 +12,8 @@ export interface WechatConfig {
   baseUrl?: string;
   /** 长轮询超时，默认 35000ms */
   longPollTimeoutMs?: number;
+  /** Token 过期时自动重新扫码的回调 */
+  onTokenExpired?: () => Promise<string>;
 }
 
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
@@ -28,7 +30,8 @@ const MAX_RETRY_DELAY_MS = 30_000;
 export class WechatClient implements PlatformClient {
   readonly platform = 'wechat' as const;
 
-  private readonly token: string;
+  private readonly config: WechatConfig;
+  private token: string;
   private readonly baseUrl: string;
   private readonly pollTimeoutMs: number;
   private readonly xWechatUin: string;
@@ -42,6 +45,7 @@ export class WechatClient implements PlatformClient {
   private abortCtrl: AbortController | null = null;
 
   constructor(config: WechatConfig) {
+    this.config = config;
     this.token = config.token;
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
     this.pollTimeoutMs = config.longPollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
@@ -105,7 +109,19 @@ export class WechatClient implements PlatformClient {
         // Only check ret/errcode when they are present.
         if (data.ret !== undefined && data.ret !== 0) {
           if (data.errcode === -14) {
-            console.error('[WechatClient] session expired (errcode=-14), stopping poll');
+            console.error('[WechatClient] session expired (errcode=-14)');
+            if (this.config.onTokenExpired) {
+              try {
+                const newToken = await this.config.onTokenExpired();
+                this.renewToken(newToken);
+                retryDelay = 1000;
+                continue;
+              } catch (err) {
+                console.error('[WechatClient] token renewal failed:', err);
+                void this.close();
+                break;
+              }
+            }
             void this.close();
             break;
           }
@@ -202,6 +218,17 @@ export class WechatClient implements PlatformClient {
         };
       },
     };
+  }
+
+  /** Replace token and reset poll state — used after token renewal. */
+  renewToken(newToken: string): void {
+    this.token = newToken;
+    this.getUpdatesBuf = '';
+    this.connected = true;
+    if (!this.abortCtrl || this.abortCtrl.signal.aborted) {
+      this.abortCtrl = new AbortController();
+      void this.pollLoop();
+    }
   }
 
   streamCapability(): StreamCapability {

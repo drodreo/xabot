@@ -1,18 +1,24 @@
 import { Command } from 'commander';
-import { WechatClient, type WechatConfig } from '../platforms/wechat/client.js';
+import { WechatClient } from '../platforms/wechat/client.js';
 import { login } from '../platforms/wechat/login.js';
 import { health } from './health.js';
 import { run } from './run.js';
-import { chat, type ChatOptions } from './chat.js';
+import { chat } from './chat.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
+import type { PlatformClient } from '../core/client.js';
 
-function createWechatClient(token: string, baseUrl?: string): WechatClient {
-  const cfg: WechatConfig = { token };
-  if (baseUrl) cfg.baseUrl = baseUrl;
-  return new WechatClient(cfg);
-}
+/** Noop client used as a placeholder before Establish creates a real WechatClient. */
+const noopClient: PlatformClient = {
+  platform: 'wechat' as const,
+  async connect() { throw new Error('not initialized'); },
+  async send() { throw new Error('not initialized'); },
+  messages() { throw new Error('not initialized'); },
+  streamCapability() { throw new Error('not initialized'); },
+  async healthCheck() { throw new Error('not initialized'); },
+  async close() { /* no-op */ },
+};
 
 export function registerWechat(program: Command): void {
   const wechat = program
@@ -20,20 +26,12 @@ export function registerWechat(program: Command): void {
     .description('WeChat (iLink Bot) platform commands');
 
   wechat
-    .command('login')
-    .description('Login via QR code scan, outputs { token, baseUrl } to stdout')
-    .action(async () => {
-      const result = await login();
-      process.stdout.write(JSON.stringify(result) + '\n');
-    });
-
-  wechat
     .command('health')
     .requiredOption('--token <token>', 'WeChat iLink Bot token')
     .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .description('Verify credentials and connection health')
     .action(async (opts) => {
-      const client = createWechatClient(opts.token, opts.baseUrl);
+      const client = new WechatClient({ token: opts.token, baseUrl: opts.baseUrl });
       await client.connect();
       await health(client);
       await client.close();
@@ -41,26 +39,31 @@ export function registerWechat(program: Command): void {
 
   wechat
     .command('run')
-    .requiredOption('--token <token>', 'WeChat iLink Bot token')
-    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
-    .action(async (opts) => {
-      const cloud = createWechatClient(opts.token, opts.baseUrl);
-      await cloud.connect();
-
+    .action(async () => {
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
-      const peer = new XacppPeer(transport, establishHandler);
 
-      const bridge = new Bridge(cloud, transport);
+      const bridge = new Bridge(noopClient, transport);
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
+
+      establishHandler.setLoginFn(() => login());
+      establishHandler.setEnsureCloudFn(async (token, baseUrl) => {
+        const cfg: import('../platforms/wechat/client.js').WechatConfig = { token };
+        if (baseUrl) cfg.baseUrl = baseUrl;
+        cfg.onTokenExpired = () => login().then((r) => r.token);
+        const client = new WechatClient(cfg);
+        await client.connect();
+        bridge.replaceCloud(client);
+      });
 
       establishHandler.onEstablished((_t, sessionId, credentials) => {
         const session = new XacppSession(transport, sessionId, credentials);
         bridge.setSession(session);
       });
 
+      const peer = new XacppPeer(transport, establishHandler);
       await peer.connect();
       bridge.markEstablished();
 
@@ -69,17 +72,19 @@ export function registerWechat(program: Command): void {
 
   wechat
     .command('chat')
-    .requiredOption('--token <token>', 'WeChat iLink Bot token')
-    .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
-    .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
-    .action(async (opts) => {
-      const cloud = createWechatClient(opts.token, opts.baseUrl);
-      await cloud.connect();
-      const chatOpts: ChatOptions = {};
-      if (opts.credentials) {
-        chatOpts.credentials = opts.credentials;
-      }
-      await chat(cloud, chatOpts);
+    .action(async () => {
+      await chat(noopClient, {
+        writer: (c) => process.stderr.write(c),
+        loginFn: () => login(),
+        cloudFactory: async (token, baseUrl) => {
+          const cfg: import('../platforms/wechat/client.js').WechatConfig = { token };
+          if (baseUrl) cfg.baseUrl = baseUrl;
+          cfg.onTokenExpired = () => login().then((r) => r.token);
+          const client = new WechatClient(cfg);
+          await client.connect();
+          return client;
+        },
+      });
     });
 }

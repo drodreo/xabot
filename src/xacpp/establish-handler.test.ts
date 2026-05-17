@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { XabotEstablishHandler } from './establish-handler.js';
 import { XabotSessionHandler } from './session-handler.js';
 import { Bridge } from '../bridge/index.js';
@@ -162,5 +162,66 @@ describe('XabotEstablishHandler', () => {
     await handler.onEstablish({} as any);
     const result = await handler.onEstablishConfirm({} as any);
     expect(handler.lastHandler).toBe(result.handler);
+  });
+
+  // ── WeChat login path ─────────────────────────────────────────────────
+
+  it('WeChat: no credentials → loginFn called → ensureCloudFn called → challenge → confirm with JSON credentials', async () => {
+    const handler = new XabotEstablishHandler();
+    const mockTransport = {} as any;
+
+    const loginFn = vi.fn().mockResolvedValue({ token: 'tok_wx', baseUrl: 'https://wx.qq.com' });
+    const ensureCloudFn = vi.fn().mockResolvedValue(undefined);
+    handler.setLoginFn(loginFn);
+    handler.setEnsureCloudFn(ensureCloudFn);
+
+    const establishPromise = handler.onEstablish(mockTransport);
+    handler.submitChallenge('ch_abc', 'chat_wx_123');
+    const result = await establishPromise;
+
+    expect(result.type).toBe('challenge_required');
+    expect(loginFn).toHaveBeenCalledTimes(1);
+    expect(ensureCloudFn).toHaveBeenCalledWith('tok_wx', 'https://wx.qq.com');
+
+    const confirmResult = await handler.onEstablishConfirm(mockTransport);
+    expect(confirmResult.credentials).toBe(JSON.stringify({
+      botToken: 'tok_wx',
+      baseUrl: 'https://wx.qq.com',
+      chatId: 'chat_wx_123',
+    }));
+  });
+
+  it('WeChat: credentials with botToken → ensureCloudFn called → direct established', async () => {
+    const handler = new XabotEstablishHandler();
+    const mockTransport = {} as any;
+
+    const ensureCloudFn = vi.fn().mockResolvedValue(undefined);
+    handler.setEnsureCloudFn(ensureCloudFn);
+
+    const credentials = JSON.stringify({ botToken: 'tok_recon', baseUrl: 'https://wx.qq.com', chatId: 'chat_1' });
+    const result = await handler.onEstablish(mockTransport, credentials);
+
+    expect(result.type).toBe('established');
+    expect(ensureCloudFn).toHaveBeenCalledWith('tok_recon', 'https://wx.qq.com');
+  });
+
+  it('Feishu: no loginFn → original challenge path → credentials is plain chatId', async () => {
+    const handler = new XabotEstablishHandler();
+    const mockTransport = {} as any;
+
+    handler.submitChallenge('feishu_ch', 'och_123');
+    const result = await handler.onEstablish(mockTransport);
+    expect(result.type).toBe('challenge_required');
+
+    const confirmResult = await handler.onEstablishConfirm(mockTransport);
+    expect(confirmResult.credentials).toBe('och_123');
+  });
+
+  it('clearPending resets all internal state', () => {
+    const handler = new XabotEstablishHandler();
+    handler.submitChallenge('x', 'y');
+    handler.clearPending();
+    expect((handler as any).pendingChallengeResult).toBeNull();
+    expect((handler as any).pendingChatId).toBeNull();
   });
 });

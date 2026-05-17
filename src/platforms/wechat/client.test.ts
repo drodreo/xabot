@@ -427,4 +427,59 @@ describe('WechatClient', () => {
       expect(result.done).toBe(true);
     });
   });
+
+  // --------------------------------------------------------------------------
+  // onTokenExpired / renewToken
+  // --------------------------------------------------------------------------
+
+  describe('onTokenExpired', () => {
+    it('errcode=-14 triggers onTokenExpired and renews token', async () => {
+      const onTokenExpired = vi.fn().mockResolvedValue('new_tok_123');
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({ ret: -1, errcode: -14 }))
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf1',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [{ type: 1, text_item: { text: 'hello' } }],
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig({ onTokenExpired }));
+      await client.connect();
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(onTokenExpired).toHaveBeenCalledTimes(1);
+      expect((client as any).token).toBe('new_tok_123');
+      await client.close();
+    });
+
+    it('errcode=-14 without onTokenExpired closes client', async () => {
+      mockFetch.mockResolvedValueOnce(makeJsonResponse({ ret: -1, errcode: -14 }));
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect((client as any).connected).toBe(false);
+    });
+  });
+
+  describe('renewToken', () => {
+    it('replaces token and resets getUpdatesBuf', () => {
+      const client = new WechatClient(makeConfig());
+      (client as any).getUpdatesBuf = 'old_buf';
+      client.renewToken('renewed_tok');
+
+      expect((client as any).token).toBe('renewed_tok');
+      expect((client as any).getUpdatesBuf).toBe('');
+      expect((client as any).connected).toBe(true);
+    });
+  });
 });

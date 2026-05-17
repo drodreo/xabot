@@ -1,3 +1,4 @@
+import type { PlatformClient } from '../core/client.js';
 import { XabotSessionHandler } from './session-handler.js';
 import type { XacppTransport, EstablishHandler, XacppSessionHandler, EstablishDecision } from 'xacpp';
 import type { Bridge } from '../bridge/index.js';
@@ -29,6 +30,18 @@ export class XabotEstablishHandler implements EstablishHandler {
   /** The chatId from the cloud message that delivered the challenge. Used as credentials on confirm. */
   private pendingChatId: string | null = null;
 
+  /** WeChat login function — called when no credentials and no challenge available. */
+  private loginFn: (() => Promise<{ token: string; baseUrl: string }>) | null = null;
+
+  /** Callback to create/connect a cloud client after login or with existing credentials. */
+  private ensureCloudFn: ((token: string, baseUrl: string) => Promise<void>) | null = null;
+
+  /** Resolved token from login or credentials parsing. */
+  private resolvedBotToken: string | null = null;
+
+  /** Resolved baseUrl from login or credentials parsing. */
+  private resolvedBaseUrl: string | null = null;
+
   onEstablished(callback: (transport: XacppTransport, sessionId: string, credentials: string) => void): void {
     this.onSession = callback;
   }
@@ -39,6 +52,22 @@ export class XabotEstablishHandler implements EstablishHandler {
 
   get lastHandler(): XabotSessionHandler | null {
     return this._lastHandler;
+  }
+
+  setLoginFn(fn: () => Promise<{ token: string; baseUrl: string }>): void {
+    this.loginFn = fn;
+  }
+
+  setEnsureCloudFn(fn: (token: string, baseUrl: string) => Promise<void>): void {
+    this.ensureCloudFn = fn;
+  }
+
+  clearPending(): void {
+    this.pendingChallengeResult = null;
+    this.pendingChatId = null;
+    this.resolvedBotToken = null;
+    this.resolvedBaseUrl = null;
+    this.challengeResolver = null;
   }
 
   /**
@@ -62,7 +91,32 @@ export class XabotEstablishHandler implements EstablishHandler {
     credentials?: string,
   ): Promise<EstablishDecision> {
     if (credentials) {
+      // Attempt to parse as WeChat JSON credentials
+      try {
+        const parsed = JSON.parse(credentials) as unknown;
+        if (typeof parsed === 'object' && parsed !== null && 'botToken' in parsed) {
+          const { botToken, baseUrl } = parsed as { botToken: string; baseUrl?: string };
+          if (this.ensureCloudFn) {
+            await this.ensureCloudFn(botToken, baseUrl ?? '');
+          }
+          this.resolvedBotToken = botToken;
+          this.resolvedBaseUrl = baseUrl ?? null;
+          return this.createSession(transport, credentials);
+        }
+      } catch {
+        // Not JSON — treat as Feishu chatId string
+      }
+      // Feishu path: credentials is a plain chatId string
       return this.createSession(transport, credentials);
+    }
+
+    // No credentials — try WeChat login first
+    if (this.loginFn && this.ensureCloudFn) {
+      const { token, baseUrl } = await this.loginFn();
+      await this.ensureCloudFn(token, baseUrl);
+      this.resolvedBotToken = token;
+      this.resolvedBaseUrl = baseUrl;
+      // Fall through to challenge path (same as Feishu)
     }
 
     // Challenge path: wait for submitChallenge() to deliver the challenge + chatId.
@@ -87,10 +141,27 @@ export class XabotEstablishHandler implements EstablishHandler {
       throw new Error('no pending challenge to confirm');
     }
     const chatId = this.pendingChatId;
+
+    let credentials: string;
+    if (this.resolvedBotToken !== null) {
+      // WeChat: assemble JSON credentials
+      credentials = JSON.stringify({
+        botToken: this.resolvedBotToken,
+        baseUrl: this.resolvedBaseUrl ?? '',
+        chatId,
+      });
+    } else {
+      // Feishu: plain chatId
+      credentials = chatId;
+    }
+
     this.pendingChatId = null;
     this.pendingChallengeResult = null;
-    const result = this.createSession(transport, chatId);
-    return { sessionId: result.sessionId, handler: result.handler, credentials: chatId };
+    this.resolvedBotToken = null;
+    this.resolvedBaseUrl = null;
+
+    const decision = this.createSession(transport, credentials);
+    return { sessionId: decision.sessionId, handler: decision.handler, credentials };
   }
 
   private createSession(

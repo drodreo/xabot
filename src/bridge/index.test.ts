@@ -866,4 +866,38 @@ describe('Bridge', () => {
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply' });
   });
+
+  it('replaceCloud swaps the underlying PlatformClient', async () => {
+    const newCloud = {
+      platform: 'wechat',
+      send: vi.fn().mockResolvedValue(undefined),
+      messages: vi.fn().mockReturnValue({ [Symbol.asyncIterator]: async function* () {} }),
+      streamCapability: vi.fn(),
+      healthCheck: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      connect: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import('../core/client.js').PlatformClient;
+
+    bridge.replaceCloud(newCloud);
+
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-1'));
+    bridge.markEstablished();
+    await bridge.handleCommand({
+      message: { content: [{ type: 'text', text: 'hello' }] },
+    } as any);
+
+    expect(newCloud.send).toHaveBeenCalledWith('chat-1', { type: 'text', text: 'hello' });
+  });
+
+  it('setSession with JSON credentials extracts chatId field', () => {
+    const session = mockSession(sessionRequestCommand, JSON.stringify({ botToken: 't', baseUrl: 'u', chatId: 'wx_chat_123' }));
+    bridge.setSession(session);
+    expect((bridge as any).sessionChatId).toBe('wx_chat_123');
+  });
+
+  it('setSession with plain string credentials uses raw value', () => {
+    const session = mockSession(sessionRequestCommand, 'och_456');
+    bridge.setSession(session);
+    expect((bridge as any).sessionChatId).toBe('och_456');
+  });
 });

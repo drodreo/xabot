@@ -12,7 +12,7 @@ import { parseInput } from './input-parser.js';
  *   back to the corresponding chatId.
  */
 export class Bridge {
-  private readonly cloud: PlatformClient;
+  private cloud: PlatformClient;
   private readonly transport: XacppTransport;
 
   /** chatId → activityId */
@@ -41,10 +41,26 @@ export class Bridge {
     this.transport = transport;
   }
 
+  /** Replace the cloud PlatformClient (used after Establish login creates a new client). */
+  replaceCloud(cloud: PlatformClient): void {
+    this.cloud = cloud;
+  }
+
   /** Call after establish succeeds to inject session reference. */
   setSession(session: XacppSession): void {
     this.session = session;
-    this.sessionChatId = session.credentials as unknown as ChannelId;
+    // Extract chatId from credentials — WeChat uses JSON, Feishu uses plain string
+    const raw = session.credentials as string;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (typeof parsed === 'object' && parsed !== null && 'chatId' in parsed) {
+        this.sessionChatId = (parsed as { chatId: string }).chatId as ChannelId;
+      } else {
+        this.sessionChatId = raw as ChannelId;
+      }
+    } catch {
+      this.sessionChatId = raw as ChannelId;
+    }
   }
 
   /** Set the establish handler — Phase 1 feeds discovered challenges to it. */
