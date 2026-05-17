@@ -1,6 +1,6 @@
 {
   "name": "xabot",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Bidirectional message bridge connecting XACPP-enabled Agents to Feishu and WeChat.",
   "author": "drodreo",
   "license": "MIT",

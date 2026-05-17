@@ -1,4 +1,5 @@
 import type { ChannelId } from '../core/types.js';
+import { StreamCapability } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
 import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart } from 'xacpp';
 import { parseInput } from './input-parser.js';
@@ -111,6 +112,11 @@ export class Bridge {
       case 'content_delta':
       case 'content_part': {
         if (!chatId) return { kind: 'acknowledge' };
+        // NonStreaming: drop intermediate deltas, only send final complete
+        if (this.cloud!.streamCapability() === StreamCapability.NonStreaming) {
+          return { kind: 'acknowledge' };
+        }
+        // Streaming: forward delta to cloud
         const payload = event.event.payload as ContentPart;
         if (payload.type === 'text') {
           await this.cloud.send(chatId, { type: 'text', text: payload.text });

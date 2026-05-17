@@ -12,10 +12,13 @@
  */
 
 import { Command } from 'commander';
+import { readFileSync } from 'node:fs';
 import { registerFeishu } from './feishu.js';
 import { registerWechat } from './wechat.js';
 
 const program = new Command();
+const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
+program.version(pkg.version);
 
 program
   .name('xabot')

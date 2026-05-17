@@ -30,7 +30,7 @@ export async function run(
   options: RunOptions,
 ): Promise<void> {
   const {
-    writer = (chunk: string) => process.stdout.write(chunk),
+    writer = (chunk: string) => process.stderr.write(chunk),
   } = options;
 
   // Track shutdown so we only close once.

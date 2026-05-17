@@ -51,11 +51,11 @@ export function registerFeishu(program: Command): void {
       establishHandler.onEstablished((_t, sessionId, credentials) => {
         const session = new XacppSession(transport, sessionId, credentials);
         bridge.setSession(session);
+        bridge.markEstablished();
       });
 
       bridge.run();
       await peer.connect();
-      bridge.markEstablished();
 
       await run(bridge, peer, {});
     });
