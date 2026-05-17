@@ -32,15 +32,13 @@ CLI is organized by platform subcommands:
 
 ```
 xabot feishu --app-id <ID> --app-secret <SECRET> <action>
-xabot wechat login
-xabot wechat --token <TOKEN> <action>
+xabot wechat <action>
 ```
 
 ### Actions
 
 | Action | Lifecycle | Description |
 |--------|-----------|-------------|
-| `login` | One-shot | WeChat only — QR code scan login, outputs `{ token, baseUrl }` |
 | `health` | One-shot | Verify credentials and connectivity |
 | `run` | Long-running | Production: stdio ↔ platform bidirectional bridge |
 | `chat` | Long-running | Interactive debug: terminal ↔ Agent ↔ platform |
@@ -60,16 +58,18 @@ xabot feishu --app-id <ID> --app-secret <SECRET> chat
 
 ### WeChat
 
-WeChat uses a two-stage connection — login first to obtain a token, then use it:
-
 ```bash
-# Stage 1: QR code login → stdout prints { token, baseUrl }
-xabot wechat login
+# Health check (requires a previously obtained token)
+xabot wechat health --token <TOKEN>
 
-# Stage 2: Use the token
-xabot wechat --token <TOKEN> health
-xabot wechat --token <TOKEN> run
-xabot wechat --token <TOKEN> chat
+# Production bridge (auto QR-code login on first start)
+xabot wechat run
+
+# Interactive chat
+xabot wechat chat
+
+# Reconnect with existing credentials
+xabot wechat chat --credentials <CREDENTIALS>
 ```
 
 ### chat Terminal Commands

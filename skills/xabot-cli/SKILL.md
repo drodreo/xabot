@@ -61,7 +61,7 @@ Collect via `sensitive_info`:
 1. **Verify connectivity** (requires a previously obtained token)
 
    ```bash
-   xabot wechat --token <TOKEN> health
+   xabot wechat health --token <TOKEN>
    ```
 
 2. **Start bridge**

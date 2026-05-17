@@ -39,8 +39,6 @@ export function registerWechat(program: Command): void {
       establishHandler.setEnsureCloudFn(async (token, baseUrl) => {
         const cfg: WechatConfig = { token };
         if (baseUrl) cfg.baseUrl = baseUrl;
-        // renewToken only swaps the internal token; the client instance stays the same,
-        // so bridge.replaceCloud() is not needed here.
         cfg.onTokenExpired = () => login().then((r) => r.token);
         const client = new WechatClient(cfg);
         await client.connect();

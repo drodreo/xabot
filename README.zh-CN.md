@@ -32,15 +32,13 @@ CLI 按平台组织为子命令：
 
 ```
 xabot feishu --app-id <ID> --app-secret <SECRET> <action>
-xabot wechat login
-xabot wechat --token <TOKEN> <action>
+xabot wechat <action>
 ```
 
 ### 命令
 
 | 命令 | 生命周期 | 说明 |
 |------|---------|------|
-| `login` | 单次 | 仅微信 — 扫码登录，stdout 输出 `{ token, baseUrl }` |
 | `health` | 单次 | 验证凭证与连通性 |
 | `run` | 长连接 | 正式模式：stdio ↔ 平台双向桥接 |
 | `chat` | 长连接 | 交互调试：终端 ↔ Agent ↔ 平台 |
@@ -60,16 +58,18 @@ xabot feishu --app-id <ID> --app-secret <SECRET> chat
 
 ### 微信
 
-微信采用两阶段连接 — 先登录获取 token，再使用 token：
-
 ```bash
-# 阶段 1：扫码登录 → stdout 输出 { token, baseUrl }
-xabot wechat login
+# 健康检查（需要已获取的 token）
+xabot wechat health --token <TOKEN>
 
-# 阶段 2：使用 token
-xabot wechat --token <TOKEN> health
-xabot wechat --token <TOKEN> run
-xabot wechat --token <TOKEN> chat
+# 正式桥接（首次启动自动触发扫码登录）
+xabot wechat run
+
+# 交互式聊天
+xabot wechat chat
+
+# 使用已有凭证重新连接
+xabot wechat chat --credentials <CREDENTIALS>
 ```
 
 ### chat 终端命令

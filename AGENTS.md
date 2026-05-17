@@ -25,7 +25,6 @@ Platform subcommands (`feishu` / `wechat`), each with:
 
 | Subcommand | Lifecycle | Purpose |
 |--------|---------|------|
-| `login` | One-shot | (wechat only) QR code scan login, outputs `{ token, baseUrl }` to stdout |
 | `health` | One-shot | Credential/connectivity check |
 | `run` | Long-running | Production: cloud ↔ XACPP bidirectional bridge (chatId obtained via Establish handshake) |
 | `chat` | Long-running | Interactive chat: runs both Initiator and Responder in-process, Establish handshake + terminal chat |
