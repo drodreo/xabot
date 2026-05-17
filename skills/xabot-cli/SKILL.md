@@ -9,7 +9,20 @@ description: |
 
 xabot bridges XACPP protocol peers to Feishu / WeChat. Follow the steps below to establish communication.
 
-**Prerequisite**: xabot is globally installed (`npm install -g xabot`). All commands use `xabot` directly.
+**Invocation**: `npx xabot` (auto-downloads if not installed) or `xabot` (if globally installed).
+
+### Choose Platform
+
+If the user does not specify a platform, ask which one to connect to before proceeding.
+
+### Credential Storage
+
+Platform credentials are stored via the `sensitive_info` tool as environment variables. Never ask for secrets directly in conversation.
+
+| Credential | Environment Variable | Source |
+|------------|---------------------|--------|
+| Feishu App ID | `XABOT_FEISHU_APP_ID` | User provides |
+| Feishu App Secret | `XABOT_FEISHU_APP_SECRET` | User provides |
 
 ---
 
@@ -17,16 +30,16 @@ xabot bridges XACPP protocol peers to Feishu / WeChat. Follow the steps below to
 
 ### Prerequisites
 
-Obtain from the user:
-- Feishu App ID
-- Feishu App Secret
+Collect via `sensitive_info`:
+- `XABOT_FEISHU_APP_ID`
+- `XABOT_FEISHU_APP_SECRET`
 
 ### Steps
 
 1. **Verify connectivity**
 
    ```bash
-   xabot feishu --app-id <ID> --app-secret <SECRET> health
+   xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET health
    ```
 
    Success: exit code 0. Failure: stderr prints error details.
@@ -34,7 +47,7 @@ Obtain from the user:
 2. **Start bridge**
 
    ```bash
-   xabot feishu --app-id <ID> --app-secret <SECRET> run
+   xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET run
    ```
 
    Long-running process. Stdio is used for XACPP bidirectional message routing.
@@ -45,39 +58,29 @@ Obtain from the user:
 
 ### Steps
 
-1. **Login (obtain token)**
+1. **Verify connectivity** (requires a previously obtained token)
 
    ```bash
-   xabot wechat login
+   xabot wechat --token <TOKEN> health
    ```
 
-   **Interactive** — requires the user to:
-   - Press Enter to open a browser showing a QR code
-   - Scan the QR code with WeChat and confirm on phone
-
-   On success, **stdout** prints a single JSON line:
-
-   ```json
-   {"token":"ilinkbot_xxx","baseUrl":"https://ilinkai.weixin.qq.com"}
-   ```
-
-   Save both values. `token` is required for all subsequent commands. Pass `baseUrl` as `--base-url` if it differs from the default.
-
-   On failure or expiry, re-run `login`.
-
-2. **Verify connectivity**
+2. **Start bridge**
 
    ```bash
-   xabot wechat --token <TOKEN> --base-url <URL> health
-   ```
-
-3. **Start bridge**
-
-   ```bash
-   xabot wechat --token <TOKEN> --base-url <URL> run
+   xabot wechat run
    ```
 
    Long-running process. Stdio is used for XACPP bidirectional message routing.
+   
+   On first start, the process automatically opens a browser for QR-code login. After the user scans and confirms on their phone, the bridge begins normal operation. If the token expires (`errcode=-14`), the bridge automatically re-triggers the login flow.
+
+3. **Interactive chat**
+
+   ```bash
+   xabot wechat chat
+   ```
+
+   Same auto-login behavior as `run`.
 
 ---
 
@@ -85,6 +88,6 @@ Obtain from the user:
 
 | Symptom | Cause | Action |
 |---------|-------|--------|
-| `errcode=-14` | WeChat token expired | Re-run `xabot wechat login` |
-| HTTP 401 | Invalid token | Verify token was copied completely |
+| `errcode=-14` | WeChat token expired | Bridge auto-relogs; no manual action needed |
+| HTTP 401 | Invalid token | Verify the `--token` passed to `health` |
 | Bot cannot reply (WeChat) | No inbound message yet | Wait for user to send a message first |

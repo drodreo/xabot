@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { WechatClient } from '../platforms/wechat/client.js';
+import { WechatClient, type WechatConfig } from '../platforms/wechat/client.js';
 import { login } from '../platforms/wechat/login.js';
 import { health } from './health.js';
 import { run } from './run.js';
@@ -8,6 +8,7 @@ import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
 import type { PlatformClient } from '../core/client.js';
+import { StreamCapability } from '../core/types.js';
 
 /** Noop client used as a placeholder before Establish creates a real WechatClient. */
 const noopClient: PlatformClient = {
@@ -15,7 +16,7 @@ const noopClient: PlatformClient = {
   async connect() { throw new Error('not initialized'); },
   async send() { throw new Error('not initialized'); },
   messages() { throw new Error('not initialized'); },
-  streamCapability() { throw new Error('not initialized'); },
+  streamCapability() { return StreamCapability.NonStreaming; },
   async healthCheck() { throw new Error('not initialized'); },
   async close() { /* no-op */ },
 };
@@ -50,8 +51,10 @@ export function registerWechat(program: Command): void {
 
       establishHandler.setLoginFn(() => login());
       establishHandler.setEnsureCloudFn(async (token, baseUrl) => {
-        const cfg: import('../platforms/wechat/client.js').WechatConfig = { token };
+        const cfg: WechatConfig = { token };
         if (baseUrl) cfg.baseUrl = baseUrl;
+        // renewToken only swaps the internal token; the client instance stays the same,
+        // so bridge.replaceCloud() is not needed here.
         cfg.onTokenExpired = () => login().then((r) => r.token);
         const client = new WechatClient(cfg);
         await client.connect();
@@ -78,7 +81,7 @@ export function registerWechat(program: Command): void {
         writer: (c) => process.stderr.write(c),
         loginFn: () => login(),
         cloudFactory: async (token, baseUrl) => {
-          const cfg: import('../platforms/wechat/client.js').WechatConfig = { token };
+          const cfg: WechatConfig = { token };
           if (baseUrl) cfg.baseUrl = baseUrl;
           cfg.onTokenExpired = () => login().then((r) => r.token);
           const client = new WechatClient(cfg);

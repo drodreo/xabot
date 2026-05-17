@@ -1,4 +1,3 @@
-import type { PlatformClient } from '../core/client.js';
 import { XabotSessionHandler } from './session-handler.js';
 import type { XacppTransport, EstablishHandler, XacppSessionHandler, EstablishDecision } from 'xacpp';
 import type { Bridge } from '../bridge/index.js';
