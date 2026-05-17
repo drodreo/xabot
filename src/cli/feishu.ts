@@ -53,6 +53,7 @@ export function registerFeishu(program: Command): void {
         bridge.setSession(session);
       });
 
+      bridge.run();
       await peer.connect();
       bridge.markEstablished();
 

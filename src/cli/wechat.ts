@@ -53,6 +53,7 @@ export function registerWechat(program: Command): void {
       });
 
       const peer = new XacppPeer(transport, establishHandler);
+      bridge.run();
       await peer.connect();
       bridge.markEstablished();
 

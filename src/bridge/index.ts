@@ -31,6 +31,7 @@ export class Bridge {
 
   private abortCtrl = new AbortController();
   private closed = false;
+  private runPromise: Promise<void> | null = null;
 
   /** Whether the establish handshake has completed. */
   private established = false;
@@ -201,8 +202,18 @@ export class Bridge {
     }
   }
 
-  /** Cloud message loop: two-phase consumption. */
+  /** Cloud message loop: two-phase consumption (idempotent). */
   async run(): Promise<void> {
+    if (this.runPromise) return this.runPromise;
+    if (this.closed) {
+      this.runPromise = Promise.resolve();
+      return this.runPromise;
+    }
+    this.runPromise = this._run();
+    return this.runPromise;
+  }
+
+  private async _run(): Promise<void> {
     if (this.closed) return;
     await this.cloudReady;
     if (this.closed || !this.cloud) return;
@@ -377,6 +388,7 @@ export class Bridge {
     if (this.closed) return;
     this.closed = true;
     this.abortCtrl.abort();
+    this.runPromise = null;
     this.chatToActivity.clear();
     for (const [, resolve] of this.pendingResponses) {
       resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });

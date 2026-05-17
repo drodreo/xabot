@@ -119,11 +119,11 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
     writer(`[chat] establish completed, sessionId=${sessionId}, chatId=${credentials}\n`);
   });
 
-  writer('[chat] connecting Responder peer...\n');
-  await responderPeer.connect();
-  writer('[chat] Responder peer connected, starting Bridge.run()...\n');
   // Start Bridge.run() in the background so Phase 1 can scan cloud messages.
   bridge.run();
+  writer('[chat] connecting Responder peer...\n');
+  await responderPeer.connect();
+  writer('[chat] Responder peer connected\n');
 
   // ── Step 4: Await Initiator connect (TCP already initiated in Step 2) ──
 
