@@ -31,7 +31,7 @@ describe('toStandardMessage', () => {
     };
 
     const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'image', url: 'https://cdn.example.com/img.jpg' });
+    expect(result.content).toEqual({ type: 'image', source: { localUri: '', remoteUrl: 'https://cdn.example.com/img.jpg', mimeType: '', sizeBytes: 0 } });
   });
 
   it('converts a file message', () => {
@@ -45,7 +45,7 @@ describe('toStandardMessage', () => {
     };
 
     const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'file', url: 'https://cdn.example.com/report.pdf', name: 'report.pdf' });
+    expect(result.content).toEqual({ type: 'file', name: 'report.pdf', source: { localUri: '', remoteUrl: 'https://cdn.example.com/report.pdf', mimeType: '', sizeBytes: 0 } });
   });
 
   it('handles unknown item type as fallback', () => {
@@ -90,12 +90,12 @@ describe('fromMessageContent', () => {
   });
 
   it('converts image to text fallback', () => {
-    const req = fromMessageContent('user_bob', { type: 'image', url: 'https://cdn.example.com/photo.png' }, 'ctx_img');
+    const req = fromMessageContent('user_bob', { type: 'image', source: { localUri: '', remoteUrl: 'https://cdn.example.com/photo.png', mimeType: '', sizeBytes: 0 } }, 'ctx_img');
     expect(req.msg.item_list).toEqual([{ type: 1, text_item: { text: '[image]' } }]);
   });
 
   it('converts file to text fallback', () => {
-    const req = fromMessageContent('user_carol', { type: 'file', url: 'https://cdn.example.com/doc.pdf', name: 'doc.pdf' }, 'ctx_file');
+    const req = fromMessageContent('user_carol', { type: 'file', source: { localUri: '', remoteUrl: 'https://cdn.example.com/doc.pdf', mimeType: '', sizeBytes: 0 } }, 'ctx_file');
     expect(req.msg.item_list).toEqual([{ type: 1, text_item: { text: '[file: doc.pdf]' } }]);
   });
 });

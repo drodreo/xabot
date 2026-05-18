@@ -8,9 +8,11 @@ import {
 
 import type { PlatformClient } from '../../core/client.js';
 import type { ChannelId, MessageId, Message, MessageContent } from '../../core/types.js';
+import type { FileRef } from 'xacpp';
 import { StreamCapability, channelId, messageId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
+import { uploadImage, uploadFile, fetchToTemp, safeUnlink } from './upload.js';
 
 export type LogLevel = 'info' | 'debug' | 'trace';
 
@@ -97,16 +99,73 @@ export class FeishuClient implements PlatformClient {
   }
 
   async send(chatId: ChannelId, content: MessageContent): Promise<MessageId> {
-    const body = fromMessageContent(chatId, content);
+    if (content.type === 'text') {
+      return this._doSend(fromMessageContent(chatId, content));
+    }
+
+    const src = content.source;
+
+    if (src.localUri) {
+      try {
+        return await this._uploadAndSend(chatId, content, src.localUri);
+      } catch (err) {
+        console.error('[FeishuClient] upload failed, falling back to text:', err);
+        return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type}]` }));
+      }
+    }
+
+    if (src.remoteUrl) {
+      // Try sending directly (remoteUrl may be an existing key)
+      try {
+        return await this._doSend(fromMessageContent(chatId, content));
+      } catch (err) {
+        console.error('[FeishuClient] direct send failed, trying fetch+upload:', err);
+        // Direct send failed — try fetch + upload
+        let tmpPath: string | undefined;
+        try {
+          tmpPath = await fetchToTemp(src.remoteUrl);
+          return await this._uploadAndSend(chatId, content, tmpPath);
+        } catch (err2) {
+          console.error('[FeishuClient] fetch+upload failed, falling back to text:', err2);
+          return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type}]` }));
+        } finally {
+          if (tmpPath) {
+            await safeUnlink(tmpPath);
+          }
+        }
+      }
+    }
+
+    return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type} 无法发送]` }));
+  }
+
+  private async _uploadAndSend(
+    chatId: ChannelId,
+    content: Extract<MessageContent, { source: FileRef }>,
+    filePath: string,
+  ): Promise<MessageId> {
+    if (content.type === 'image') {
+      const key = await uploadImage(this.httpClient, filePath);
+      const effective: MessageContent = { ...content, source: { ...content.source, remoteUrl: key } };
+      return this._doSend(fromMessageContent(chatId, effective));
+    }
+
+    const result = await uploadFile(this.httpClient, filePath, content.source.mimeType, content.type === 'file' ? content.name : undefined);
+    const effective: MessageContent = { ...content, source: { ...content.source, remoteUrl: result.key } };
+    if (effective.type === 'file' && effective.name === undefined) {
+      effective.name = result.name;
+    }
+    return this._doSend(fromMessageContent(chatId, effective));
+  }
+
+  private async _doSend(body: import('./message.js').FeishuMessageBody): Promise<MessageId> {
     const result = await this.httpClient.im.message.create({
       data: {
         receive_id: body.receive_id,
         msg_type: body.msg_type,
         content: body.content,
       },
-      params: {
-        receive_id_type: 'chat_id',
-      },
+      params: { receive_id_type: 'chat_id' },
     });
 
     if (result.code !== 0) {

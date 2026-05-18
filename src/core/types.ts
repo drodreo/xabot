@@ -1,5 +1,7 @@
 /** Standard message types shared across all platforms. */
 
+import type { FileRef } from 'xacpp';
+
 export type MessageId = string & { readonly __brand: 'MessageId' };
 export type ChannelId = string & { readonly __brand: 'ChannelId' };
 export type UserId = string & { readonly __brand: 'UserId' };
@@ -17,8 +19,10 @@ export enum StreamCapability {
 
 export type MessageContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; url: string }
-  | { type: 'file'; url: string; name: string };
+  | { type: 'image'; source: FileRef }
+  | { type: 'audio'; source: FileRef }
+  | { type: 'video'; source: FileRef }
+  | { type: 'file'; source: FileRef; name?: string };
 
 export interface Message {
   id: MessageId;

@@ -160,7 +160,7 @@ describe('Bridge integration', () => {
       id: messageId('msg-img'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'image', url: 'https://example.com/img.png' },
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
     cloudMessagesIter.stop();
@@ -238,7 +238,7 @@ describe('Bridge integration', () => {
       },
     });
 
-    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/gen.png' });
+    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/gen.png', mimeType: 'image/png', sizeBytes: 50 } });
   });
 
   it('L2: complete event → cloud.send assistantReply via sessionChatId', async () => {

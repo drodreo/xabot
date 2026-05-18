@@ -59,9 +59,19 @@ function contentToFeishuBody(content: MessageContent): string {
     case 'text':
       return JSON.stringify({ text: content.text });
     case 'image':
-      return JSON.stringify({ image_key: content.url });
-    case 'file':
-      return JSON.stringify({ file_key: content.url, file_name: content.name });
+      return JSON.stringify({ image_key: content.source.remoteUrl });
+    case 'audio':
+      // Feishu audio msg_type only accepts opus; non-opus is sent as file
+      if (content.source.mimeType === 'audio/opus') {
+        return JSON.stringify({ file_key: content.source.remoteUrl });
+      }
+      return JSON.stringify({ file_key: content.source.remoteUrl, file_name: 'audio' });
+    case 'video':
+      return JSON.stringify({ file_key: content.source.remoteUrl });
+    case 'file': {
+      const name = content.name ?? content.source.remoteUrl.split('/').pop() ?? content.source.remoteUrl;
+      return JSON.stringify({ file_key: content.source.remoteUrl, file_name: name });
+    }
   }
 }
 
@@ -70,9 +80,20 @@ export function fromMessageContent(
   receiveId: string,
   content: MessageContent,
 ): FeishuMessageBody {
+  let msg_type: string;
+  switch (content.type) {
+    case 'text': msg_type = 'text'; break;
+    case 'image': msg_type = 'image'; break;
+    case 'audio':
+      // Feishu audio msg_type only accepts opus; non-opus is sent as file
+      msg_type = content.source.mimeType === 'audio/opus' ? 'audio' : 'file';
+      break;
+    case 'video': msg_type = 'media'; break;
+    case 'file': msg_type = 'file'; break;
+  }
   return {
     receive_id: receiveId,
-    msg_type: content.type === 'file' ? 'file' : content.type,
+    msg_type,
     content: contentToFeishuBody(content),
   };
 }
@@ -97,21 +118,35 @@ function parseFeishuContent(
     case 'image': {
       try {
         const parsed = JSON.parse(rawContent) as { image_key?: string };
-        return { type: 'image', url: parsed.image_key ?? '' };
+        return { type: 'image', source: { localUri: '', remoteUrl: parsed.image_key ?? '', mimeType: '', sizeBytes: 0 } };
       } catch {
-        return { type: 'image', url: '' };
+        return { type: 'image', source: { localUri: '', remoteUrl: '', mimeType: '', sizeBytes: 0 } };
+      }
+    }
+    case 'audio': {
+      try {
+        const parsed = JSON.parse(rawContent) as { file_key?: string };
+        return { type: 'audio', source: { localUri: '', remoteUrl: parsed.file_key ?? '', mimeType: 'audio/opus', sizeBytes: 0 } };
+      } catch {
+        return { type: 'audio', source: { localUri: '', remoteUrl: '', mimeType: 'audio/opus', sizeBytes: 0 } };
+      }
+    }
+    case 'media': {
+      try {
+        const parsed = JSON.parse(rawContent) as { file_key?: string };
+        return { type: 'video', source: { localUri: '', remoteUrl: parsed.file_key ?? '', mimeType: 'video/mp4', sizeBytes: 0 } };
+      } catch {
+        return { type: 'video', source: { localUri: '', remoteUrl: '', mimeType: 'video/mp4', sizeBytes: 0 } };
       }
     }
     case 'file': {
       try {
         const parsed = JSON.parse(rawContent) as { file_key?: string; file_name?: string };
-        return {
-          type: 'file',
-          url: parsed.file_key ?? '',
-          name: parsed.file_name ?? 'unknown',
-        };
+        return parsed.file_name !== undefined
+          ? { type: 'file', source: { localUri: '', remoteUrl: parsed.file_key ?? '', mimeType: '', sizeBytes: 0 }, name: parsed.file_name }
+          : { type: 'file', source: { localUri: '', remoteUrl: parsed.file_key ?? '', mimeType: '', sizeBytes: 0 } };
       } catch {
-        return { type: 'file', url: '', name: 'unknown' };
+        return { type: 'file', source: { localUri: '', remoteUrl: '', mimeType: '', sizeBytes: 0 } };
       }
     }
     default:

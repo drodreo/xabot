@@ -100,7 +100,7 @@ describe('FeishuClient', () => {
       });
 
       const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
-      await client.send(channelId('oc_chat1'), { type: 'image', url: 'img_v2_abc' });
+      await client.send(channelId('oc_chat1'), { type: 'image', source: { localUri: '', remoteUrl: 'img_v2_abc', mimeType: '', sizeBytes: 0 } });
 
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
@@ -121,15 +121,14 @@ describe('FeishuClient', () => {
       const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
       await client.send(channelId('oc_chat1'), {
         type: 'file',
-        url: 'file_v2_xyz',
-        name: 'doc.pdf',
+        source: { localUri: '', remoteUrl: 'file_v2_xyz', mimeType: '', sizeBytes: 0 },
       });
 
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
           msg_type: 'file',
-          content: JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'doc.pdf' }),
+          content: JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'file_v2_xyz' }),
         },
         params: { receive_id_type: 'chat_id' },
       });

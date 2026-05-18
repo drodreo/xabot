@@ -54,16 +54,27 @@ describe('MessageContent', () => {
   });
 
   it('constructs image variant', () => {
-    const content = { type: 'image' as const, url: 'https://example.com/img.png' };
+    const content = { type: 'image' as const, source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } };
     expect(content.type).toBe('image');
-    expect(content.url).toBe('https://example.com/img.png');
+    expect(content.source.remoteUrl).toBe('https://example.com/img.png');
+  });
+
+  it('constructs audio variant', () => {
+    const content = { type: 'audio' as const, source: { localUri: '', remoteUrl: 'https://example.com/audio.opus', mimeType: 'audio/opus', sizeBytes: 0 } };
+    expect(content.type).toBe('audio');
+    expect(content.source.remoteUrl).toBe('https://example.com/audio.opus');
+  });
+
+  it('constructs video variant', () => {
+    const content = { type: 'video' as const, source: { localUri: '', remoteUrl: 'https://example.com/video.mp4', mimeType: 'video/mp4', sizeBytes: 0 } };
+    expect(content.type).toBe('video');
+    expect(content.source.remoteUrl).toBe('https://example.com/video.mp4');
   });
 
   it('constructs file variant', () => {
-    const content = { type: 'file' as const, url: 'https://example.com/doc.pdf', name: 'doc.pdf' };
+    const content = { type: 'file' as const, source: { localUri: '', remoteUrl: 'https://example.com/doc.pdf', mimeType: '', sizeBytes: 0 } };
     expect(content.type).toBe('file');
-    expect(content.url).toBe('https://example.com/doc.pdf');
-    expect(content.name).toBe('doc.pdf');
+    expect(content.source.remoteUrl).toBe('https://example.com/doc.pdf');
   });
 });
 

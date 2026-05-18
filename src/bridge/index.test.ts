@@ -200,7 +200,7 @@ describe('Bridge', () => {
       id: messageId('msg-1'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'image', url: 'https://example.com/img.png' },
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
     cloudMessagesIter.stop();
@@ -226,7 +226,7 @@ describe('Bridge', () => {
       id: messageId('msg-1'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'file', url: 'https://example.com/doc.pdf', name: 'doc.pdf' },
+      content: { type: 'file', source: { localUri: '', remoteUrl: 'https://example.com/doc.pdf', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
     cloudMessagesIter.stop();
@@ -234,8 +234,8 @@ describe('Bridge', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
-    expect(invokeCall.invoke_activity.messages[0].type).toBe('text');
-    expect(invokeCall.invoke_activity.messages[0].text).toBe('[file: doc.pdf]');
+    expect(invokeCall.invoke_activity.messages[0].type).toBe('file');
+    expect(invokeCall.invoke_activity.messages[0].source.remoteUrl).toBe('https://example.com/doc.pdf');
   });
 
   it('last_activity returns activity_ready → no new_activity', async () => {
@@ -673,7 +673,7 @@ describe('Bridge', () => {
 
     expect(response).toEqual({ kind: 'acknowledge' });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'hello from agent' });
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/img.png' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
   });
 
   it('handleCommand message without sessionChatId returns acknowledge', async () => {
@@ -704,7 +704,7 @@ describe('Bridge', () => {
       },
     });
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/img.png' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
   });
 
   it('handleEvent complete with image in assistantReply sends image to cloud via sessionChatId', async () => {
@@ -724,7 +724,7 @@ describe('Bridge', () => {
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Here is the image:' });
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', url: 'https://example.com/result.png' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/result.png', mimeType: 'image/png', sizeBytes: 200 } });
   });
 
   // ── Problem 5: cloud.send failure cleans up pending ─────────────────────

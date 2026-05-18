@@ -83,6 +83,21 @@ export class Bridge {
     this.establishHandler = handler;
   }
 
+  /** Send a single ContentPart to the cloud platform. */
+  private async _sendContentPart(chatId: ChannelId, part: ContentPart): Promise<void> {
+    if (!this.cloud) return;
+    if (part.type === 'text') {
+      await this.cloud.send(chatId, { type: 'text', text: part.text });
+    } else {
+      const src = part.source;
+      if (src.localUri || src.remoteUrl) {
+        await this.cloud.send(chatId, { type: part.type, source: src });
+      } else {
+        await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
+      }
+    }
+  }
+
   /** Handle Command from downstream Agent (forwarded via XabotSessionHandler.onCommand). */
   async handleCommand(command: XacppCommand): Promise<XacppResponse> {
     if (!this.cloud) return { kind: 'acknowledge' };
@@ -90,13 +105,7 @@ export class Bridge {
       const chatId = this.sessionChatId;
       if (!chatId) return { kind: 'acknowledge' };
       for (const part of command.message.content) {
-        if (part.type === 'text') {
-          await this.cloud.send(chatId, { type: 'text', text: part.text });
-        } else if (part.type === 'image') {
-          await this.cloud.send(chatId, { type: 'image', url: part.source.remoteUrl });
-        } else {
-          await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
-        }
+        await this._sendContentPart(chatId, part);
       }
       return { kind: 'acknowledge' };
     }
@@ -118,26 +127,14 @@ export class Bridge {
         }
         // Streaming: forward delta to cloud
         const payload = event.event.payload as ContentPart;
-        if (payload.type === 'text') {
-          await this.cloud.send(chatId, { type: 'text', text: payload.text });
-        } else if (payload.type === 'image') {
-          await this.cloud.send(chatId, { type: 'image', url: payload.source.remoteUrl });
-        } else {
-          await this.cloud.send(chatId, { type: 'text', text: `[${payload.type}]` });
-        }
+        await this._sendContentPart(chatId, payload);
         return { kind: 'acknowledge' };
       }
 
       case 'complete': {
         if (!chatId) return { kind: 'acknowledge' };
         for (const part of event.event.assistantReply) {
-          if (part.type === 'text') {
-            await this.cloud.send(chatId, { type: 'text', text: part.text });
-          } else if (part.type === 'image') {
-            await this.cloud.send(chatId, { type: 'image', url: part.source.remoteUrl });
-          } else {
-            await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
-          }
+          await this._sendContentPart(chatId, part);
         }
         return { kind: 'acknowledge' };
       }
@@ -363,16 +360,19 @@ export class Bridge {
         }
 
         const parts: ContentPart[] = [];
-        if (msg.content.type === 'image') {
-          parts.push({
-            type: 'image',
-            source: { remoteUrl: msg.content.url, localUri: '', mimeType: 'image/*', sizeBytes: 0 },
-          });
-        } else if (msg.content.type === 'file') {
-          parts.push({
-            type: 'text',
-            text: `[file: ${(msg.content as { name: string }).name}]`,
-          });
+        switch (msg.content.type) {
+          case 'image':
+            parts.push({ type: 'image', source: msg.content.source });
+            break;
+          case 'audio':
+            parts.push({ type: 'audio', source: msg.content.source });
+            break;
+          case 'video':
+            parts.push({ type: 'video', source: msg.content.source });
+            break;
+          case 'file':
+            parts.push({ type: 'file', source: msg.content.source });
+            break;
         }
 
         await this.session.requestCommand({

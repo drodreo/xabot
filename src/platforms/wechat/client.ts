@@ -2,7 +2,8 @@ import type { PlatformClient } from '../../core/client.js';
 import type { ChannelId, MessageId, Message, MessageContent } from '../../core/types.js';
 import { StreamCapability, messageId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
-import { toStandardMessage, fromMessageContent, type WeixinMessage } from './message.js';
+import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, type WeixinMessage } from './message.js';
+import { uploadMedia, fetchToTemp, safeUnlink } from './upload.js';
 import { randomBytes } from 'node:crypto';
 
 export interface WechatConfig {
@@ -169,8 +170,50 @@ export class WechatClient implements PlatformClient {
     }
 
     const contextToken = this.contextTokenStore.get(chatId) ?? '';
-    const body = fromMessageContent(chatId, content, contextToken);
+    let effective: MessageContent;
 
+    if (content.type === 'text') {
+      effective = content;
+    } else {
+      const src = content.source;
+      let filePath: string | undefined;
+      let tmpPath: string | undefined;
+
+      try {
+        if (src.localUri) {
+          filePath = src.localUri;
+        } else if (src.remoteUrl) {
+          tmpPath = await fetchToTemp(src.remoteUrl);
+          filePath = tmpPath;
+        }
+
+        if (filePath) {
+          const mediaType = content.type === 'audio' ? 'file' : content.type;
+          const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, filePath, mediaType);
+          const body = fromMessageContentWithUpload(chatId, content, contextToken, result);
+          return this._sendBody(body);
+        }
+      } catch (err) {
+        console.error('[WechatClient] upload/fetch failed, falling back to text:', err);
+        // upload or fetch failed — fall through to text fallback
+      } finally {
+        if (tmpPath) {
+          await safeUnlink(tmpPath);
+        }
+      }
+
+      if (src.localUri || src.remoteUrl) {
+        effective = { type: 'text', text: `[${content.type}]` };
+      } else {
+        effective = { type: 'text', text: `[${content.type} 无法发送]` };
+      }
+    }
+
+    const body = fromMessageContent(chatId, effective, contextToken);
+    return this._sendBody(body);
+  }
+
+  private async _sendBody(body: import('./message.js').WeixinSendRequest): Promise<MessageId> {
     const res = await this.post('/ilink/bot/sendmessage', body);
 
     if (!res.ok) {

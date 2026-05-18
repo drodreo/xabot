@@ -88,7 +88,7 @@ describe('toStandardMessage', () => {
 
     const msg = toStandardMessage(event);
 
-    expect(msg.content).toEqual({ type: 'image', url: 'img_v2_abc123' });
+    expect(msg.content).toEqual({ type: 'image', source: { localUri: '', remoteUrl: 'img_v2_abc123', mimeType: '', sizeBytes: 0 } });
   });
 
   it('converts a file message event', () => {
@@ -111,7 +111,7 @@ describe('toStandardMessage', () => {
 
     expect(msg.content).toEqual({
       type: 'file',
-      url: 'file_v2_xyz',
+      source: { localUri: '', remoteUrl: 'file_v2_xyz', mimeType: '', sizeBytes: 0 },
       name: 'report.pdf',
     });
   });
@@ -171,7 +171,7 @@ describe('fromMessageContent', () => {
   it('builds an image message body', () => {
     const body = fromMessageContent('oc_chat1', {
       type: 'image',
-      url: 'img_v2_abc',
+      source: { localUri: '', remoteUrl: 'img_v2_abc', mimeType: '', sizeBytes: 0 },
     });
 
     expect(body.receive_id).toBe('oc_chat1');
@@ -182,12 +182,11 @@ describe('fromMessageContent', () => {
   it('builds a file message body', () => {
     const body = fromMessageContent('oc_chat1', {
       type: 'file',
-      url: 'file_v2_xyz',
-      name: 'doc.pdf',
+      source: { localUri: '', remoteUrl: 'file_v2_xyz', mimeType: '', sizeBytes: 0 },
     });
 
     expect(body.receive_id).toBe('oc_chat1');
     expect(body.msg_type).toBe('file');
-    expect(body.content).toBe(JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'doc.pdf' }));
+    expect(body.content).toBe(JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'file_v2_xyz' }));
   });
 });
