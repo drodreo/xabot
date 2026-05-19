@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import type { PlatformClient } from '../core/client.js';
-import type { StreamCapability } from '../core/types.js';
 import { messageId, StreamCapability as SC } from '../core/types.js';
 import { health } from './health.js';
 
@@ -39,26 +38,11 @@ function unhealthyClient(reason = 'not connected'): PlatformClient {
 }
 
 describe('health', () => {
-  it('writes a success message when healthCheck passes', async () => {
-    const output: string[] = [];
-    await health(healthyClient(), { writer: (chunk) => output.push(chunk) });
-    expect(output[0]).toMatch(/✅/);
-    expect(output[0]).toMatch(/feishu/);
-    expect(output[0]).toMatch(/connection OK/);
+  it('passes when healthCheck succeeds', async () => {
+    await expect(health(healthyClient())).resolves.toBeUndefined();
   });
 
-  it('writes a failure message when healthCheck throws', async () => {
-    const output: string[] = [];
-    await expect(
-      health(unhealthyClient('token expired'), { writer: (chunk) => output.push(chunk) }),
-    ).rejects.toThrow('token expired');
-    expect(output[0]).toMatch(/❌/);
-    expect(output[0]).toMatch(/token expired/);
-  });
-
-  it('uses client.platform in the success message', async () => {
-    const output: string[] = [];
-    await health(healthyClient(), { writer: (chunk) => output.push(chunk) });
-    expect(output[0]).toContain('feishu');
+  it('throws when healthCheck fails', async () => {
+    await expect(health(unhealthyClient('token expired'))).rejects.toThrow('token expired');
   });
 });

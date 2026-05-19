@@ -61,7 +61,7 @@ export function registerWechat(program: Command): void {
       bridge.run();
       await peer.connect();
 
-      await run(bridge, peer, {});
+      await run(bridge, peer);
     });
 
   wechat
@@ -72,7 +72,6 @@ export function registerWechat(program: Command): void {
       const { logLevel } = wechat.opts();
       setLevel(logLevel);
       const chatOpts: import('./chat.js').ChatOptions = {
-        writer: (c) => process.stderr.write(c),
         loginFn: () => login(),
         cloudFactory: async (token, baseUrl) => {
           const cfg: WechatConfig = { token };

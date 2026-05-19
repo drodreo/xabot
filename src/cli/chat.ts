@@ -18,10 +18,10 @@ import { Bridge } from '../bridge/index.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { InitiatorSessionHandler } from '../xacpp/initiator-session-handler.js';
 import { StdinRouter } from '../xacpp/stdin-router.js';
+import { createLogger } from '../core/logger.js';
+const log = createLogger('chat');
 
 export interface ChatOptions {
-  /** Output writer — defaults to process.stderr.write. */
-  writer?: (chunk: string) => void;
   /** Existing session credentials — skips challenge/pairing flow. */
   credentials?: string;
   /** WeChat login function — called when no credentials to trigger QR scan. */
@@ -41,16 +41,14 @@ export interface ChatOptions {
  *                      Bridge ←→ Cloud PlatformClient
  *
  * @param cloud   - A connected PlatformClient.
- * @param options - Optional writer injection.
+ * @param options - Optional credentials/login/cloudFactory.
  */
 export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promise<void> {
-  const writer = options?.writer ?? ((chunk: string) => process.stderr.write(chunk));
-
-  writer('[chat] starting...\n');
+  log.info('starting...');
 
   // ── Step 1: Start TCP server on a random port ──────────────────────────
 
-  writer('[chat] creating TCP server...\n');
+  log.debug('creating TCP server...');
   const { port, accept } = await new Promise<{ port: number; accept: Promise<net.Socket> }>(
     (resolve, reject) => {
       const server = net.createServer();
@@ -67,7 +65,7 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
       server.on('error', reject);
     },
   );
-  writer(`[chat] TCP server listening on 127.0.0.1:${port}\n`);
+  log.info('TCP server listening on 127.0.0.1:%d', port);
 
   // ── Step 2: Fire Initiator TCP connect (non-blocking) ─────────────────
   // SocketTransport.connectTo() only stores params — the actual TCP
@@ -75,7 +73,7 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   // We must fire peer.connect() BEFORE await accept, otherwise the TCP
   // server never receives a connection and both sides deadlock.
 
-  writer('[chat] initiating TCP connection from Initiator side...\n');
+  log.debug('initiating TCP connection from Initiator side...');
   const initiatorTransport = SocketTransport.connectTo(port);
   const dummyEstablishHandler: import('xacpp').EstablishHandler = {
     async onEstablish() { throw new Error('Initiator does not accept inbound establish'); },
@@ -83,7 +81,7 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   };
   const initiatorPeer = new XacppPeer(initiatorTransport, dummyEstablishHandler);
   const router = new StdinRouter(process.stdin as unknown as Readable);
-  const initiatorHandler = new InitiatorSessionHandler(writer, router);
+  const initiatorHandler = new InitiatorSessionHandler(router);
 
   // Fire-and-forget: peer.connect() internally calls transport.connect()
   // which opens the TCP socket. The server will see the connection and
@@ -92,9 +90,9 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
 
   // ── Step 3: Start Bridge (Responder side) ──────────────────────────────
 
-  writer('[chat] waiting for TCP accept (Responder side)...\n');
+  log.debug('waiting for TCP accept (Responder side)...');
   const responderTransport = new SocketTransport(await accept);
-  writer('[chat] TCP connection accepted\n');
+  log.info('TCP connection accepted');
   const establishHandler = new XabotEstablishHandler();
   const responderPeer = new XacppPeer(responderTransport, establishHandler);
 
@@ -116,20 +114,20 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
     const session = new XacppSession(responderTransport, sessionId, credentials);
     bridge.setSession(session);
     bridge.markEstablished();
-    writer(`[chat] establish completed, sessionId=${sessionId}, chatId=${credentials}\n`);
+    log.info('establish completed, sessionId=%s, chatId=%s', sessionId, credentials);
   });
 
   // Start Bridge.run() in the background so Phase 1 can scan cloud messages.
   bridge.run();
-  writer('[chat] connecting Responder peer...\n');
+  log.debug('connecting Responder peer...');
   await responderPeer.connect();
-  writer('[chat] Responder peer connected\n');
+  log.info('Responder peer connected');
 
   // ── Step 4: Await Initiator connect (TCP already initiated in Step 2) ──
 
-  writer('[chat] awaiting Initiator peer connect...\n');
+  log.debug('awaiting Initiator peer connect...');
   await initiatorConnectPromise;
-  writer('[chat] Initiator peer connected\n');
+  log.info('Initiator peer connected');
 
   // ── Step 5: Establish (challenge or credentials) ───────────────────────
 
@@ -137,35 +135,36 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   const credentials = options?.credentials;
 
   if (credentials) {
-    writer(`[chat] Reconnecting with credentials: ${credentials}\n`);
-    writer('[chat] calling initiatorPeer.establish() with credentials...\n');
+    log.info('Reconnecting with credentials: %s', credentials);
+    log.debug('calling initiatorPeer.establish() with credentials...');
     session = await initiatorPeer.establish(credentials, initiatorHandler, () => {});
     const chatId = session.credentials;
-    writer(`[chat] Re-established, chatId: ${chatId}\n`);
+    log.info('Re-established, chatId: %s', chatId);
   } else {
     const challenge = crypto.randomUUID();
-    writer(`[chat] Pairing code: ${challenge}\n[chat] Send this code to the bot via Feishu/WeChat.\n`);
+    log.info('Pairing code: %s', challenge);
+    log.info('Send this code to the bot via Feishu/WeChat.');
 
-    writer('[chat] calling initiatorPeer.establish()...\n');
+    log.debug('calling initiatorPeer.establish()...');
     session = await initiatorPeer.establish(
       undefined,
       initiatorHandler,
       (received) => {
-        writer(`[chat] challenge verify: expected=${challenge}, received=${received}\n`);
+        log.debug('challenge verify: expected=%s, received=%s', challenge, received);
         if (received !== challenge) {
           throw new Error(`Challenge mismatch: expected ${challenge}, got ${received}`);
         }
       },
     );
     const chatId = session.credentials;
-    writer(`[chat] Connected! chatId: ${chatId}\n`);
+    log.info('Connected! chatId: %s', chatId);
   }
 
-  writer('[chat] Ready. Type a message and press Enter, or wait for Feishu/WeChat messages.\n');
+  log.info('Ready. Type a message and press Enter, or wait for Feishu/WeChat messages.');
 
   router.subscribe('default', (text) => {
     return initiatorHandler.sendReply(session, text).catch((err) => {
-      writer(`Send failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      log.error('Send failed: %s', err instanceof Error ? err.message : String(err));
     });
   });
 

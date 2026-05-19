@@ -1,6 +1,8 @@
 import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler, ContentPart } from 'xacpp';
 import type { XacppSession } from 'xacpp';
 import { StdinRouter } from './stdin-router.js';
+import { createLogger } from '../core/logger.js';
+const log = createLogger('chat-handler');
 
 /**
  * Initiator-side XacppSessionHandler for the `chat` CLI subcommand.
@@ -14,13 +16,11 @@ import { StdinRouter } from './stdin-router.js';
  *     Bridge → cloud.send() → Feishu/WeChat.
  */
 export class InitiatorSessionHandler implements XacppSessionHandler {
-  private readonly writer: (text: string) => void;
   private readonly router: StdinRouter;
   private activityId: string | null = null;
   private cmdResolve: ((value: string) => void) | null = null;
 
-  constructor(writer: (text: string) => void, router: StdinRouter) {
-    this.writer = writer;
+  constructor(router: StdinRouter) {
     this.router = router;
     this.router.subscribe('cmd_response', (input) => {
       this.cmdResolve?.(input);
@@ -32,8 +32,8 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
     if (typeof command === 'object' && 'new_activity' in command) {
       // Responder requests a new activity — generate an ID.
       this.activityId = crypto.randomUUID();
-      this.writer(`[chat] activity created: ${this.activityId}\n`);
-      this.writer(`[chat] new_activity → activity_ready, agent=chat\n`);
+      log.info('activity created: %s', this.activityId);
+      log.info('new_activity → activity_ready, agent=chat');
       return { kind: 'activity_ready', activity: this.activityId, agent: 'chat' };
     }
 
@@ -42,11 +42,11 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       const { messages } = command.invoke_activity;
       for (const part of messages) {
         if (part.type === 'text') {
-          this.writer(`[chat] invoke_activity [act-${this.activityId ?? 'none'}][> IN]: ${part.text}\n`);
+          log.info('invoke_activity [act-%s][> IN]: %s', this.activityId ?? 'none', part.text);
         } else if (part.type === 'image') {
-          this.writer(`[chat] invoke_activity [act-${this.activityId ?? 'none'}][> IN]: [image: ${part.source.remoteUrl}]\n`);
+          log.info('invoke_activity [act-%s][> IN]: [image: %s]', this.activityId ?? 'none', part.source.remoteUrl);
         } else {
-          this.writer(`[chat] invoke_activity [act-${this.activityId ?? 'none'}][> IN]: [${part.type}]\n`);
+          log.info('invoke_activity [act-%s][> IN]: [%s]', this.activityId ?? 'none', part.type);
         }
       }
       return { kind: 'acknowledge' };
@@ -54,21 +54,21 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
 
     if (typeof command === 'object' && 'compact_activity' in command) {
       const { activity } = command.compact_activity;
-      this.writer(`[chat] compact_activity [act-${activity}]\n`);
+      log.info('compact_activity [act-%s]', activity);
       return { kind: 'acknowledge' };
     }
 
     if (typeof command === 'object' && 'cancel_activity' in command) {
       const { activity } = command.cancel_activity;
-      this.writer(`[chat] cancel_activity [act-${activity}]\n`);
+      log.info('cancel_activity [act-%s]', activity);
       return { kind: 'acknowledge' };
     }
 
     if (command === 'last_activity') {
-      this.writer('[chat] received last_activity command\n');
-      this.writer('[chat] last_activity → received\n');
+      log.info('received last_activity command');
+      log.info('last_activity → received');
       this.router.intercept();
-      this.writer('[chat] Resume previous activity? Enter activity ID (or press Enter for new):\n');
+      log.info('Resume previous activity? Enter activity ID (or press Enter for new):');
 
       const input = await new Promise<string>((resolve) => {
         this.cmdResolve = resolve;
@@ -77,18 +77,18 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       this.router.release();
 
       if (!input) {
-        this.writer('[chat] no activity ID provided, returning activity_not_found\n');
-        this.writer('[chat] last_activity → activity_not_found\n');
+        log.info('no activity ID provided, returning activity_not_found');
+        log.info('last_activity → activity_not_found');
         return { kind: 'activity_not_found' };
       }
       this.activityId = input;
-      this.writer(`[chat] resuming activity: ${input}\n`);
-      this.writer(`[chat] last_activity → activity_ready, agent=chat\n`);
+      log.info('resuming activity: %s', input);
+      log.info('last_activity → activity_ready, agent=chat');
       return { kind: 'activity_ready', activity: input, agent: 'chat' };
     }
 
     const cmdStr = typeof command === 'string' ? command : (Object.keys(command)[0] ?? 'object');
-    this.writer(`[chat] unknown command: ${cmdStr} → acknowledge\n`);
+    log.warn('unknown command: %s → acknowledge', cmdStr);
     return { kind: 'acknowledge' };
   }
 
@@ -102,7 +102,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
    * which routes it through Bridge → cloud.send() → Feishu/WeChat.
    */
   async sendReply(session: XacppSession, text: string): Promise<void> {
-    this.writer(`[chat] invoke_activity [act-${this.activityId ?? 'none'}][> OUT]: ${text}\n`);
+    log.info('invoke_activity [act-%s][> OUT]: %s', this.activityId ?? 'none', text);
 
     const contentPart: ContentPart = { type: 'text', text };
 

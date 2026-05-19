@@ -15,6 +15,8 @@ import { Command } from 'commander';
 import { readFileSync } from 'node:fs';
 import { registerFeishu } from './feishu.js';
 import { registerWechat } from './wechat.js';
+import { createLogger } from '../core/logger.js';
+const log = createLogger('xabot');
 
 const program = new Command();
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
@@ -46,7 +48,7 @@ program.parseAsync(process.argv).then(
   () => process.exit(0),
   (err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`❌ ${msg}\n`);
+    log.error('fatal: %s', msg);
     process.exit(1);
   },
 );

@@ -20,11 +20,28 @@ export interface Logger {
   error(fmt: string, ...args: unknown[]): void;
 }
 
+function format(fmt: string, args: unknown[]): string {
+  let i = 0;
+  return fmt.replace(/%[sdjoO%]/g, (m) => {
+    if (m === '%%') return '%';
+    if (i >= args.length) return m;
+    const arg = args[i++];
+    switch (m) {
+      case '%s': return String(arg);
+      case '%d': return Number(arg).toString();
+      case '%j':
+      case '%o':
+      case '%O': return JSON.stringify(arg);
+      default: return m;
+    }
+  });
+}
+
 export function createLogger(module: string): Logger {
   function write(level: LogLevel, fmt: string, args: unknown[]): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return;
     const ts = new Date().toISOString().slice(11, 23);
-    const msg = args.length > 0 ? `${fmt} ${args.map(String).join(' ')}` : fmt;
+    const msg = args.length > 0 ? format(fmt, args) : fmt;
     process.stdout.write(`[${ts}] [${level.toUpperCase().padEnd(5)}] [${module}] ${msg}\n`);
   }
 

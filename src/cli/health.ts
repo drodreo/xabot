@@ -6,32 +6,23 @@
  */
 
 import type { PlatformClient } from '../core/client.js';
-
-export interface HealthOptions {
-  /** Output writer — defaults to process.stdout.write. */
-  writer?: (chunk: string) => void;
-}
+import { createLogger } from '../core/logger.js';
+const log = createLogger('health');
 
 /**
  * Check the health of a connected PlatformClient.
  *
  * @param client  - A connected PlatformClient.
- * @param options - Optional writer injection.
  * @throws If the client fails to respond correctly.
  */
-export async function health(
-  client: PlatformClient,
-  options: HealthOptions = {},
-): Promise<void> {
-  const { writer = (chunk: string) => process.stdout.write(chunk) } = options;
-
+export async function health(client: PlatformClient): Promise<void> {
   try {
     await client.healthCheck();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    writer(`❌ Health check failed: ${msg}\n`);
+    log.error('Health check failed: %s', msg);
     throw err;
   }
 
-  writer(`✅ ${client.platform} connection OK\n`);
+  log.info('health: status=ok platform=%s', client.platform);
 }

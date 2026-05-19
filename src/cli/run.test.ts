@@ -50,31 +50,18 @@ describe('run', () => {
     const bridge = mockBridge();
     const peer = mockPeer();
 
-    await run(bridge, peer, {});
+    await run(bridge, peer);
 
     expect(bridge.runCalled).toBe(true);
     expect(bridge.closed).toBe(true);
     expect(peer.disconnected).toBe(true);
   });
 
-  it('uses the writer for startup and shutdown messages', async () => {
-    const bridge = mockBridge();
-    const peer = mockPeer();
-    const output: string[] = [];
-
-    await run(bridge, peer, {
-      writer: (chunk) => output.push(chunk),
-    });
-
-    expect(output.some((o) => o.includes('Bridge mode started'))).toBe(true);
-    expect(output.some((o) => o.includes('Bridge closed'))).toBe(true);
-  });
-
   it('close() is idempotent — multiple SIGINT only close once', async () => {
     const bridge = mockBridge();
     const peer = mockPeer();
 
-    await run(bridge, peer, {});
+    await run(bridge, peer);
 
     expect(bridge.closed).toBe(true);
     expect(peer.disconnected).toBe(true);

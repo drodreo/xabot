@@ -74,35 +74,29 @@ describe('chat', () => {
     vi.restoreAllMocks();
   });
 
-  it('with credentials: passes credentials to establish and logs reconnect', async () => {
-    const writer = vi.fn();
+  it('with credentials: passes credentials to establish', async () => {
     const cloud = mockCloud();
 
-    await chat(cloud, { credentials: 'my-cred', writer });
+    await chat(cloud, { credentials: 'my-cred' });
 
-    expect(writer).toHaveBeenCalledWith('[chat] Reconnecting with credentials: my-cred\n');
     expect(establishSpy).toHaveBeenCalledTimes(1);
     expect(establishSpy).toHaveBeenCalledWith(
       'my-cred',
       expect.anything(),
       expect.any(Function),
     );
-    expect(writer).toHaveBeenCalledWith('[chat] Re-established, chatId: cred-123\n');
   });
 
-  it('without credentials: uses undefined for establish and shows pairing code', async () => {
-    const writer = vi.fn();
+  it('without credentials: uses undefined for establish', async () => {
     const cloud = mockCloud();
 
-    await chat(cloud, { writer });
+    await chat(cloud);
 
-    expect(writer).toHaveBeenCalledWith(expect.stringMatching(/Pairing code:/));
     expect(establishSpy).toHaveBeenCalledTimes(1);
     expect(establishSpy).toHaveBeenCalledWith(
       undefined,
       expect.anything(),
       expect.any(Function),
     );
-    expect(writer).toHaveBeenCalledWith('[chat] Connected! chatId: cred-123\n');
   });
 });

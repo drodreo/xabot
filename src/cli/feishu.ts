@@ -60,7 +60,7 @@ export function registerFeishu(program: Command): void {
       bridge.run();
       await peer.connect();
 
-      await run(bridge, peer, {});
+      await run(bridge, peer);
     });
 
   feishu
