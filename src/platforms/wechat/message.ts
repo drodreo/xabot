@@ -47,6 +47,7 @@ export interface WeixinMediaPayload {
     aes_key: string;
     encrypt_type: number;
   };
+  [key: string]: unknown;
 }
 
 export type WeixinOutgoingItem =
@@ -127,16 +128,24 @@ function buildMediaItem(
   };
   switch (content.type) {
     case 'image':
-      return { type: 2, image_item: media };
+      return { type: 2, image_item: { ...media, mid_size: uploadResult.encryptedSize } };
     case 'video':
-      return { type: 5, video_item: media };
+      return { type: 5, video_item: { ...media, video_size: uploadResult.encryptedSize } };
     case 'audio':
     case 'file': {
       const name = (content.type === 'file' ? content.name : undefined)
         || content.source.remoteUrl.split('/').pop()
         || content.source.localUri.split('/').pop()
         || 'file';
-      return { type: 4, file_item: { file_name: name, ...media } };
+      return {
+        type: 4,
+        file_item: {
+          file_name: name,
+          md5: uploadResult.rawMd5,
+          len: String(uploadResult.rawSize),
+          ...media,
+        },
+      };
     }
   }
 }

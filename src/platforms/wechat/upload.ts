@@ -17,6 +17,9 @@ export interface WechatUploadResult {
   encryptQueryParam: string;
   aesKey: string;
   encryptType: number;
+  encryptedSize: number;
+  rawMd5: string;
+  rawSize: number;
 }
 
 function makeHeaders(token: string, xWechatUin: string): Record<string, string> {
@@ -47,9 +50,7 @@ export async function uploadMedia(
   const md5 = createHash('md5').update(data).digest('hex');
   const key = generateAesKey();
 
-  // Select encoding by media type
-  const isMedia = mediaType === 'image' || mediaType === 'video';
-  const aesKeyEncoded = isMedia ? encodeAesKeyForMedia(key) : encodeAesKeyForFile(key);
+  const aesKeyEncoded = encodeAesKeyForMedia(key);
   const aesKeyHex = key.toString('hex');
   const encryptedSize = Math.ceil((data.length + 1) / 16) * 16;
   const filekey = randomBytes(16).toString('hex');
@@ -122,6 +123,9 @@ export async function uploadMedia(
     encryptQueryParam,
     aesKey: aesKeyEncoded,
     encryptType: 1,
+    encryptedSize,
+    rawMd5: md5,
+    rawSize: data.length,
   };
 }
 
