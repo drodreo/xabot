@@ -214,6 +214,7 @@ describe('Bridge integration', () => {
 
   it('L2: content_delta event → cloud.send text via sessionChatId', async () => {
     const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -228,6 +229,7 @@ describe('Bridge integration', () => {
 
   it('L2: content_delta with image → cloud.send image via sessionChatId', async () => {
     const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -245,6 +247,7 @@ describe('Bridge integration', () => {
 
   it('L2: complete event → cloud.send assistantReply via sessionChatId', async () => {
     const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -259,6 +262,7 @@ describe('Bridge integration', () => {
 
   it('L2: notify event → cloud.send message via sessionChatId', async () => {
     const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -300,6 +304,7 @@ describe('Bridge integration', () => {
   // ── L4: action_request block/resume ────────────────────────────────────
 
   it('L4: action_request blocks until resolvePending', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
@@ -326,6 +331,7 @@ describe('Bridge integration', () => {
   // ── L5: cloud.send failure cleans up pending ───────────────────────────
 
   it('L5: action_request cloud.send failure → error response, pending cleaned', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     cloudSendMock.mockRejectedValueOnce(new Error('network down'));
 
     const response = await bridge.handleEvent('act-1', {
@@ -349,6 +355,7 @@ describe('Bridge integration', () => {
   });
 
   it('L5: sensitive_info_operation cloud.send failure → error response', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     cloudSendMock.mockRejectedValueOnce(new Error('timeout'));
 
     const response = await bridge.handleEvent('act-1', {
@@ -366,6 +373,7 @@ describe('Bridge integration', () => {
   // ── close() ────────────────────────────────────────────────────────────
 
   it('close() clears mappings and rejects pending', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     // Start an action_request (will be pending)
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',

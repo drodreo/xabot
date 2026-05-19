@@ -7,7 +7,7 @@ import {
 } from '@larksuiteoapi/node-sdk';
 
 import type { PlatformClient } from '../../core/client.js';
-import type { ChannelId, MessageId, Message, MessageContent } from '../../core/types.js';
+import type { ChannelId, MessageId, UserId, Message, MessageContent } from '../../core/types.js';
 import type { FileRef } from 'xacpp';
 import { StreamCapability, channelId, messageId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
@@ -44,7 +44,7 @@ export class FeishuClient implements PlatformClient {
   private messageResolve: ((msg: FeishuMessageEvent) => void) | null = null;
   private connected = false;
   readonly #abortCtrl = new AbortController();
-  private readonly activeReactions = new Map<ChannelId, { messageId: string; reactionId: string }>();
+  private readonly activeReactions = new Map<string /*messageId*/, string /*reactionId*/>();
 
   constructor(config: FeishuClientConfig) {
     this.config = config;
@@ -270,35 +270,27 @@ export class FeishuClient implements PlatformClient {
     await this.fetchTenantToken();
   }
 
-  async beginProcessing(chatId: ChannelId, messageId?: MessageId): Promise<void> {
+  async beginProcessing(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
     if (!messageId) return;
-    try {
-      const result = await this.httpClient.im.messageReaction.create({
-        path: { message_id: messageId as string },
-        data: { reaction_type: { emoji_type: 'Typing' } },
-      });
-      if (result?.data?.reaction_id) {
-        this.activeReactions.set(chatId, {
-          messageId: messageId as string,
-          reactionId: result.data.reaction_id,
-        });
-      }
-    } catch (err) {
-      log.debug('beginProcessing (reaction) failed: %s', err);
+    const result = await this.httpClient.im.messageReaction.create({
+      path: { message_id: messageId as string },
+      data: { reaction_type: { emoji_type: 'Typing' } },
+    });
+    if (result?.data?.reaction_id) {
+      this.activeReactions.set(messageId as string, result.data.reaction_id);
     }
   }
 
-  async endProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
-    const active = this.activeReactions.get(chatId);
-    if (!active) return;
+  async endProcessing(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
+    if (!messageId) return;
+    const reactionId = this.activeReactions.get(messageId as string);
+    if (!reactionId) return;
     try {
       await this.httpClient.im.messageReaction.delete({
-        path: { message_id: active.messageId, reaction_id: active.reactionId },
+        path: { message_id: messageId as string, reaction_id: reactionId },
       });
-    } catch (err) {
-      log.debug('endProcessing (reaction delete) failed: %s', err);
     } finally {
-      this.activeReactions.delete(chatId);
+      this.activeReactions.delete(messageId as string);
     }
   }
 
@@ -316,8 +308,10 @@ export class FeishuClient implements PlatformClient {
         message: { message_id: '', chat_id: '', create_time: '', chat_type: '', message_type: '', content: '' },
       });
     }
-    for (const [chatId] of this.activeReactions) {
-      await this.endProcessing(chatId).catch(() => {});
+    for (const [messageId, reactionId] of this.activeReactions) {
+      await this.httpClient.im.messageReaction.delete({
+        path: { message_id: messageId, reaction_id: reactionId },
+      }).catch(() => {});
     }
     this.activeReactions.clear();
     await this.wsClient.close({});

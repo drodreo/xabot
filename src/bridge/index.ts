@@ -1,4 +1,4 @@
-import type { ChannelId } from '../core/types.js';
+import type { ChannelId, UserId } from '../core/types.js';
 import { StreamCapability } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
 import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart } from 'xacpp';
@@ -21,8 +21,10 @@ export class Bridge {
   private readonly cloudReady: Promise<void>;
   private cloudReadyResolve: (() => void) | null = null;
 
-  /** chatId → activityId */
-  private readonly chatToActivity = new Map<ChannelId, string>();
+  /** chatId → (senderId → activityId) */
+  private readonly chatUserToActivity = new Map<ChannelId, Map<UserId, string>>();
+  /** activityId → { chatId, senderId } */
+  private readonly activityToTarget = new Map<string, { chatId: ChannelId; senderId: UserId }>();
 
   /** Obtained after establish, used to proactively send command/event */
   private session: XacppSession | null = null;
@@ -86,30 +88,66 @@ export class Bridge {
     this.establishHandler = handler;
   }
 
-  private readonly processingMessages = new Map<ChannelId, MessageId>();
+  /** Get or create senderId→activityId sub-map for a chatId. */
+  private ensureUserMap(chatId: ChannelId): Map<UserId, string> {
+    let map = this.chatUserToActivity.get(chatId);
+    if (!map) {
+      map = new Map();
+      this.chatUserToActivity.set(chatId, map);
+    }
+    return map;
+  }
 
-  private async beginProcessingIfNeeded(chatId: ChannelId, messageId: MessageId): Promise<void> {
+  /** Look up activityId for (chatId, senderId). */
+  private getActivityForUser(chatId: ChannelId, senderId: UserId): string | undefined {
+    return this.chatUserToActivity.get(chatId)?.get(senderId);
+  }
+
+  /** Bind activityId ↔ (chatId, senderId) bidirectionally. */
+  private bindActivity(chatId: ChannelId, senderId: UserId, activityId: string): void {
+    this.ensureUserMap(chatId).set(senderId, activityId);
+    this.activityToTarget.set(activityId, { chatId, senderId });
+  }
+
+  /** Unbind activityId for (chatId, senderId). */
+  private unbindActivity(chatId: ChannelId, senderId: UserId): void {
+    const userMap = this.chatUserToActivity.get(chatId);
+    if (!userMap) return;
+    const oldActivityId = userMap.get(senderId);
+    userMap.delete(senderId);
+    if (userMap.size === 0) this.chatUserToActivity.delete(chatId);
+    if (oldActivityId) this.activityToTarget.delete(oldActivityId);
+  }
+
+  /** activityId → messageId being processed */
+  private readonly processingByActivity = new Map<string, MessageId>();
+
+  private async beginProcessingIfNeeded(chatId: ChannelId, senderId: UserId, activityId: string, messageId: MessageId): Promise<void> {
     if (!this.cloud) return;
-    this.processingMessages.set(chatId, messageId);
+    this.processingByActivity.set(activityId, messageId);
     try {
-      await this.cloud.beginProcessing(chatId, messageId);
+      await this.cloud.beginProcessing(chatId, senderId, messageId);
     } catch (err) {
       log.debug('beginProcessing failed: %s', err);
     }
   }
 
-  /** Send a single ContentPart to the cloud platform. */
-  private async _sendContentPart(chatId: ChannelId, part: ContentPart): Promise<void> {
+  private async endProcessingForActivity(chatId: ChannelId, senderId: UserId, activityId: string): Promise<void> {
     if (!this.cloud) return;
-    const processingMsgId = this.processingMessages.get(chatId);
-    if (processingMsgId) {
-      this.processingMessages.delete(chatId);
-      try {
-        await this.cloud.endProcessing(chatId, processingMsgId);
-      } catch (err) {
-        log.debug('endProcessing failed: %s', err);
-      }
+    const msgId = this.processingByActivity.get(activityId);
+    if (!msgId) return;
+    this.processingByActivity.delete(activityId);
+    try {
+      await this.cloud.endProcessing(chatId, senderId, msgId);
+    } catch (err) {
+      log.debug('endProcessing failed: %s', err);
     }
+  }
+
+  /** Send a single ContentPart to the cloud platform. */
+  private async _sendContentPart(chatId: ChannelId, senderId: UserId, activityId: string, part: ContentPart): Promise<void> {
+    if (!this.cloud) return;
+    await this.endProcessingForActivity(chatId, senderId, activityId);
     if (part.type === 'text') {
       log.debug('→ cloud send: text (chatId=%s)', chatId);
       await this.cloud.send(chatId, { type: 'text', text: part.text });
@@ -132,7 +170,7 @@ export class Bridge {
       const chatId = this.sessionChatId;
       if (!chatId) return { kind: 'acknowledge' };
       for (const part of command.message.content) {
-        await this._sendContentPart(chatId, part);
+        await this._sendContentPart(chatId, '' as UserId, '', part);
       }
       return { kind: 'acknowledge' };
     }
@@ -140,9 +178,11 @@ export class Bridge {
   }
 
   /** Handle Event from downstream Agent (forwarded via XabotSessionHandler.onEvent). */
-  async handleEvent(_activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
+  async handleEvent(activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
     if (!this.cloud) return { kind: 'acknowledge' };
-    const chatId = this.sessionChatId;
+    const target = this.activityToTarget.get(activityId);
+    if (!target) return { kind: 'acknowledge' };
+    const { chatId } = target;
 
     switch (event.event.type) {
       case 'content_delta':
@@ -154,14 +194,14 @@ export class Bridge {
         }
         // Streaming: forward delta to cloud
         const payload = event.event.payload as ContentPart;
-        await this._sendContentPart(chatId, payload);
+        await this._sendContentPart(chatId, target.senderId, activityId, payload);
         return { kind: 'acknowledge' };
       }
 
       case 'complete': {
         if (!chatId) return { kind: 'acknowledge' };
         for (const part of event.event.assistantReply) {
-          await this._sendContentPart(chatId, part);
+          await this._sendContentPart(chatId, target.senderId, activityId, part);
         }
         return { kind: 'acknowledge' };
       }
@@ -269,20 +309,20 @@ export class Bridge {
           continue;
         }
 
-        const chatId = msg.chatId;
+        const { chatId, senderId } = msg;
 
         // ── Text messages: parse and dispatch by kind ─────────────────────
         if (msg.content.type === 'text') {
           const parsed = parseInput(msg.content.text);
           switch (parsed.kind) {
             case 'new': {
-              this.chatToActivity.delete(chatId);
+              this.unbindActivity(chatId, senderId);
               const createResponse = await this.session.requestCommand({
                 new_activity: { title: '' },
               });
               if (createResponse.kind === 'activity_ready') {
                 const newActivityId = createResponse.activity;
-                this.chatToActivity.set(chatId, newActivityId);
+                this.bindActivity(chatId, senderId, newActivityId);
                 if (parsed.prompt) {
                   await this.session.requestCommand({
                     invoke_activity: {
@@ -290,19 +330,19 @@ export class Bridge {
                       messages: [{ type: 'text', text: parsed.prompt }],
                     },
                   });
-                  await this.beginProcessingIfNeeded(chatId, msg.id);
+                  await this.beginProcessingIfNeeded(chatId, senderId, newActivityId, msg.id);
                 }
               }
               continue;
             }
 
             case 'compact': {
-              let activityId = this.chatToActivity.get(chatId);
+              let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
                 const lastResponse = await this.session.requestCommand('last_activity');
                 if (lastResponse.kind === 'activity_ready') {
                   activityId = lastResponse.activity;
-                  this.chatToActivity.set(chatId, activityId);
+                  this.bindActivity(chatId, senderId, activityId);
                 } else {
                   await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
                   continue;
@@ -315,12 +355,12 @@ export class Bridge {
             }
 
             case 'cancel': {
-              let activityId = this.chatToActivity.get(chatId);
+              let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
                 const lastResponse = await this.session.requestCommand('last_activity');
                 if (lastResponse.kind === 'activity_ready') {
                   activityId = lastResponse.activity;
-                  this.chatToActivity.set(chatId, activityId);
+                  this.bindActivity(chatId, senderId, activityId);
                 } else {
                   await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
                   continue;
@@ -341,7 +381,7 @@ export class Bridge {
             }
 
             case 'invoke': {
-              let activityId = this.chatToActivity.get(chatId);
+              let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
                 const lastResponse = await this.session.requestCommand('last_activity');
                 if (lastResponse.kind === 'activity_ready') {
@@ -356,7 +396,7 @@ export class Bridge {
                     continue;
                   }
                 }
-                this.chatToActivity.set(chatId, activityId);
+                this.bindActivity(chatId, senderId, activityId);
               }
               await this.session.requestCommand({
                 invoke_activity: {
@@ -364,14 +404,14 @@ export class Bridge {
                   messages: [{ type: 'text', text: parsed.text }],
                 },
               });
-              await this.beginProcessingIfNeeded(chatId, msg.id);
+              await this.beginProcessingIfNeeded(chatId, senderId, activityId, msg.id);
               continue;
             }
           }
         }
 
         // ── Non-text messages: existing behavior ──────────────────────────
-        let activityId = this.chatToActivity.get(chatId);
+        let activityId = this.getActivityForUser(chatId, senderId);
         if (!activityId) {
           const lastResponse = await this.session.requestCommand('last_activity');
           if (lastResponse.kind === 'activity_ready') {
@@ -386,7 +426,7 @@ export class Bridge {
               continue;
             }
           }
-          this.chatToActivity.set(chatId, activityId);
+          this.bindActivity(chatId, senderId, activityId);
         }
 
         const parts: ContentPart[] = [];
@@ -409,7 +449,7 @@ export class Bridge {
         await this.session.requestCommand({
           invoke_activity: { activity: activityId, messages: parts },
         });
-        await this.beginProcessingIfNeeded(chatId, msg.id);
+        await this.beginProcessingIfNeeded(chatId, senderId, activityId, msg.id);
       }
     } catch (err) {
       log.error('cloud message loop error: %s', err);
@@ -427,15 +467,19 @@ export class Bridge {
     this.closed = true;
     this.abortCtrl.abort();
     this.runPromise = null;
-    this.chatToActivity.clear();
     for (const [, resolve] of this.pendingResponses) {
       resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
     }
     this.pendingResponses.clear();
-    for (const [chatId, msgId] of this.processingMessages) {
-      await this.cloud?.endProcessing(chatId, msgId).catch(() => {});
+    for (const [activityId, msgId] of this.processingByActivity) {
+      const target = this.activityToTarget.get(activityId);
+      if (target) {
+        await this.cloud?.endProcessing(target.chatId, target.senderId, msgId).catch(() => {});
+      }
     }
-    this.processingMessages.clear();
+    this.processingByActivity.clear();
+    this.chatUserToActivity.clear();
+    this.activityToTarget.clear();
     if (this.cloudReadyResolve) {
       this.cloudReadyResolve();
       this.cloudReadyResolve = null;

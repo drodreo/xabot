@@ -510,6 +510,7 @@ describe('Bridge', () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -528,6 +529,7 @@ describe('Bridge', () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -544,6 +546,7 @@ describe('Bridge', () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -585,6 +588,7 @@ describe('Bridge', () => {
   it('resolvePending resolves a blocked action_request', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -611,6 +615,7 @@ describe('Bridge', () => {
   it('resolvePending resolves a blocked question', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -633,6 +638,7 @@ describe('Bridge', () => {
   it('close() rejects pending responses', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -692,6 +698,7 @@ describe('Bridge', () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -713,6 +720,7 @@ describe('Bridge', () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -734,6 +742,7 @@ describe('Bridge', () => {
   it('action_request: cloud.send failure returns error and cleans pending', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     // Make cloud.send reject on the next call
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
@@ -762,6 +771,7 @@ describe('Bridge', () => {
   it('question: cloud.send failure returns error and cleans pending', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 

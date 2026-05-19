@@ -1,5 +1,5 @@
 import type { PlatformClient } from '../../core/client.js';
-import type { ChannelId, MessageId, Message, MessageContent } from '../../core/types.js';
+import type { ChannelId, MessageId, UserId, Message, MessageContent } from '../../core/types.js';
 import { StreamCapability, messageId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, type WeixinMessage } from './message.js';
@@ -315,24 +315,20 @@ export class WechatClient implements PlatformClient {
   }
 
   private async sendTypingStatus(userId: string, status: 1 | 2): Promise<void> {
-    try {
-      const ticket = await this.fetchTypingTicket(userId);
-      await this.post('/ilink/bot/sendtyping', {
-        ilink_user_id: userId,
-        typing_ticket: ticket,
-        status,
-      });
-    } catch (err) {
-      log.debug('sendTypingStatus (status=%d) failed: %s', status, err);
-    }
+    const ticket = await this.fetchTypingTicket(userId);
+    await this.post('/ilink/bot/sendtyping', {
+      ilink_user_id: userId,
+      typing_ticket: ticket,
+      status,
+    });
   }
 
-  async beginProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
-    await this.sendTypingStatus(chatId as string, 1);
+  async beginProcessing(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+    await this.sendTypingStatus(senderId as string, 1);
   }
 
-  async endProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
-    await this.sendTypingStatus(chatId as string, 2);
+  async endProcessing(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+    await this.sendTypingStatus(senderId as string, 2);
   }
 
   async close(): Promise<void> {
