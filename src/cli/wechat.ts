@@ -1,4 +1,5 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
+import { setLevel } from '../core/logger.js';
 import { WechatClient, type WechatConfig } from '../platforms/wechat/client.js';
 import { login } from '../platforms/wechat/login.js';
 import { health } from './health.js';
@@ -10,7 +11,8 @@ import { Bridge } from '../bridge/index.js';
 export function registerWechat(program: Command): void {
   const wechat = program
     .command('wechat')
-    .description('WeChat (iLink Bot) platform commands');
+    .description('WeChat (iLink Bot) platform commands')
+    .addOption(new Option('--log-level <level>', 'Log level').choices(['debug', 'info', 'warn', 'error']).default('info'));
 
   wechat
     .command('health')
@@ -18,6 +20,8 @@ export function registerWechat(program: Command): void {
     .option('--base-url <url>', 'API base URL (default: https://ilinkai.weixin.qq.com)')
     .description('Verify credentials and connection health')
     .action(async (opts) => {
+      const { logLevel } = wechat.opts();
+      setLevel(logLevel);
       const client = new WechatClient({ token: opts.token, baseUrl: opts.baseUrl });
       await client.connect();
       await health(client);
@@ -28,6 +32,8 @@ export function registerWechat(program: Command): void {
     .command('run')
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
     .action(async () => {
+      const { logLevel } = wechat.opts();
+      setLevel(logLevel);
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
 
@@ -63,6 +69,8 @@ export function registerWechat(program: Command): void {
     .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
     .action(async (opts) => {
+      const { logLevel } = wechat.opts();
+      setLevel(logLevel);
       const chatOpts: import('./chat.js').ChatOptions = {
         writer: (c) => process.stderr.write(c),
         loginFn: () => login(),

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { createLogger } from '../../core/logger.js';
+const log = createLogger('WechatUpload');
 import {
   aesEcbEncrypt,
   aesEcbDecrypt,
@@ -67,6 +69,8 @@ export async function uploadMedia(
     upload_param?: { cdn_base?: string; [k: string]: unknown };
   };
 
+  log.debug('getuploadurl OK: type=%s size=%d', mediaType, data.length);
+
   if (uploadUrlData.ret !== undefined && uploadUrlData.ret !== 0) {
     throw new Error(`WeChat getuploadurl failed: ret=${uploadUrlData.ret}, errcode=${uploadUrlData.errcode}`);
   }
@@ -97,6 +101,8 @@ export async function uploadMedia(
     throw new Error('WeChat upload failed: missing x-encrypted-param header');
   }
 
+  log.debug('upload complete: encryptQueryParam=%s...', encryptQueryParam.slice(0, 16));
+
   return {
     encryptQueryParam,
     aesKey: aesKeyEncoded,
@@ -114,6 +120,8 @@ export async function downloadMedia(
   if (!res.ok) {
     throw new Error(`WeChat download failed: HTTP ${res.status}`);
   }
+
+  log.debug('download: %s → %s (%s)', downloadUrl.slice(0, 40), destPath, aesKeyType);
 
   const encrypted = Buffer.from(await res.arrayBuffer());
 

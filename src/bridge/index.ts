@@ -3,6 +3,8 @@ import { StreamCapability } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
 import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart } from 'xacpp';
 import { parseInput } from './input-parser.js';
+import { createLogger } from '../core/logger.js';
+const log = createLogger('Bridge');
 
 /**
  * Bridge — bidirectional message loop between cloud platform and XACPP agents.
@@ -87,12 +89,15 @@ export class Bridge {
   private async _sendContentPart(chatId: ChannelId, part: ContentPart): Promise<void> {
     if (!this.cloud) return;
     if (part.type === 'text') {
+      log.debug('→ cloud send: text (chatId=%s)', chatId);
       await this.cloud.send(chatId, { type: 'text', text: part.text });
     } else {
       const src = part.source;
       if (src.localUri || src.remoteUrl) {
+        log.info('→ cloud send: %s (chatId=%s)', part.type, chatId);
         await this.cloud.send(chatId, { type: part.type, source: src });
       } else {
+        log.warn('→ cloud send: %s fallback to text — no source (chatId=%s)', part.type, chatId);
         await this.cloud.send(chatId, { type: 'text', text: `[${part.type}]` });
       }
     }
@@ -230,6 +235,7 @@ export class Bridge {
         // Phase 1: pre-establish — scan for challenge messages
         if (!this.established) {
           if (msg.content.type === 'text') {
+            log.debug('Phase1: scanning challenge from text (chatId=%s)', msg.chatId);
             this.establishHandler?.submitChallenge(msg.content.text, msg.chatId);
           }
           // Continue consuming — don't route to session yet
@@ -375,12 +381,13 @@ export class Bridge {
             break;
         }
 
+        log.debug('← cloud recv: %s (chatId=%s, parts=%d)', msg.content.type, chatId, parts.length);
         await this.session.requestCommand({
           invoke_activity: { activity: activityId, messages: parts },
         });
       }
     } catch (err) {
-      console.error('[Bridge] cloud message loop error:', err);
+      log.error('cloud message loop error: %s', err);
       this.abortCtrl.abort();
     }
   }

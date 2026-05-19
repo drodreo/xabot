@@ -5,6 +5,8 @@ import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, type WeixinMessage } from './message.js';
 import { uploadMedia, fetchToTemp, safeUnlink } from './upload.js';
 import { randomBytes } from 'node:crypto';
+import { createLogger } from '../../core/logger.js';
+const log = createLogger('WechatClient');
 
 export interface WechatConfig {
   /** bot_token — 扫码登录后获得 */
@@ -110,7 +112,7 @@ export class WechatClient implements PlatformClient {
         // Only check ret/errcode when they are present.
         if (data.ret !== undefined && data.ret !== 0) {
           if (data.errcode === -14) {
-            console.error('[WechatClient] session expired (errcode=-14)');
+            log.warn('session expired (errcode=-14)');
             if (this.config.onTokenExpired) {
               try {
                 const newToken = await this.config.onTokenExpired();
@@ -118,7 +120,7 @@ export class WechatClient implements PlatformClient {
                 retryDelay = 1000;
                 continue;
               } catch (err) {
-                console.error('[WechatClient] token renewal failed:', err);
+                log.error('token renewal failed: %s', err);
                 void this.close();
                 break;
               }
@@ -149,10 +151,10 @@ export class WechatClient implements PlatformClient {
         retryDelay = 1000;
       } catch (err) {
         if (ctrl.signal.aborted) break;
-        console.error('WechatClient poll error:', err);
+        log.error('poll error: %s', err);
 
         if (err instanceof Error && err.message.includes('401')) {
-          console.error('[WechatClient] auth failed (401), stopping');
+          log.error('auth failed (401), stopping');
           void this.close();
           break;
         }
@@ -190,11 +192,12 @@ export class WechatClient implements PlatformClient {
         if (filePath) {
           const mediaType = content.type === 'audio' ? 'file' : content.type;
           const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, filePath, mediaType);
+          log.info('upload success: %s (chatId=%s)', content.type, chatId);
           const body = fromMessageContentWithUpload(chatId, content, contextToken, result);
           return this._sendBody(body);
         }
       } catch (err) {
-        console.error('[WechatClient] upload/fetch failed, falling back to text:', err);
+        log.warn('upload/fetch failed, fallback to text: %s', err);
         // upload or fetch failed — fall through to text fallback
       } finally {
         if (tmpPath) {
@@ -205,6 +208,7 @@ export class WechatClient implements PlatformClient {
       if (src.localUri || src.remoteUrl) {
         effective = { type: 'text', text: `[${content.type}]` };
       } else {
+        log.warn('send: %s has no source, sending placeholder', content.type);
         effective = { type: 'text', text: `[${content.type} 无法发送]` };
       }
     }

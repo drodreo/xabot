@@ -2,6 +2,8 @@ import type { Client as FeishuSdkClient } from '@larksuiteoapi/node-sdk';
 import { createReadStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
+import { createLogger } from '../../core/logger.js';
+const log = createLogger('FeishuUpload');
 
 type FeishuFileType = 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'stream';
 
@@ -30,6 +32,8 @@ export async function uploadImage(
   if (!result?.image_key) {
     throw new Error('Feishu image upload failed: no image_key returned');
   }
+
+  log.debug('upload image: %s → %s', filePath, result.image_key);
   return result.image_key;
 }
 
@@ -52,6 +56,8 @@ export async function uploadFile(
   if (!result?.file_key) {
     throw new Error('Feishu file upload failed: no file_key returned');
   }
+
+  log.debug('upload file: %s → %s (name=%s)', filePath, result.file_key, name);
   return { key: result.file_key, name };
 }
 
@@ -67,6 +73,8 @@ export async function downloadFile(
 
   await mkdir(dirname(destPath), { recursive: true });
   await result.writeFile(destPath);
+
+  log.debug('download file: %s → %s', fileKey, destPath);
 }
 
 export { fetchToTemp, safeUnlink } from '../../core/fs-utils.js';

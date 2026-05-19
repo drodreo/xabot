@@ -38,6 +38,6 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.63.1",
     "commander": "^14.0.3",
-    "xacpp": "^0.6.1"
+    "xacpp": "^0.6.2"
   }
 }

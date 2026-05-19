@@ -2,6 +2,8 @@
 
 import type { FileRef } from 'xacpp';
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
 export type MessageId = string & { readonly __brand: 'MessageId' };
 export type ChannelId = string & { readonly __brand: 'ChannelId' };
 export type UserId = string & { readonly __brand: 'UserId' };

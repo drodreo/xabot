@@ -13,6 +13,8 @@ import { StreamCapability, channelId, messageId, userId } from '../../core/types
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
 import { uploadImage, uploadFile, fetchToTemp, safeUnlink } from './upload.js';
+import { createLogger } from '../../core/logger.js';
+const log = createLogger('FeishuClient');
 
 export type LogLevel = 'info' | 'debug' | 'trace';
 
@@ -109,7 +111,7 @@ export class FeishuClient implements PlatformClient {
       try {
         return await this._uploadAndSend(chatId, content, src.localUri);
       } catch (err) {
-        console.error('[FeishuClient] upload failed, falling back to text:', err);
+        log.warn('upload failed (localUri), fallback to text: %s', err);
         return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type}]` }));
       }
     }
@@ -119,14 +121,14 @@ export class FeishuClient implements PlatformClient {
       try {
         return await this._doSend(fromMessageContent(chatId, content));
       } catch (err) {
-        console.error('[FeishuClient] direct send failed, trying fetch+upload:', err);
+        log.info('direct send failed, trying fetch+upload: %s', err);
         // Direct send failed — try fetch + upload
         let tmpPath: string | undefined;
         try {
           tmpPath = await fetchToTemp(src.remoteUrl);
           return await this._uploadAndSend(chatId, content, tmpPath);
         } catch (err2) {
-          console.error('[FeishuClient] fetch+upload failed, falling back to text:', err2);
+          log.warn('fetch+upload failed, fallback to text: %s', err2);
           return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type}]` }));
         } finally {
           if (tmpPath) {
@@ -136,6 +138,7 @@ export class FeishuClient implements PlatformClient {
       }
     }
 
+    log.warn('send: %s has no source, sending placeholder', content.type);
     return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type} 无法发送]` }));
   }
 

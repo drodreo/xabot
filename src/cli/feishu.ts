@@ -3,6 +3,7 @@ import { FeishuClient, type FeishuClientConfig } from '../platforms/feishu/clien
 import { health } from './health.js';
 import { run } from './run.js';
 import { chat, type ChatOptions } from './chat.js';
+import { setLevel } from '../core/logger.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
@@ -26,6 +27,7 @@ export function registerFeishu(program: Command): void {
     .description('Verify credentials and connection health')
     .action(async () => {
       const { appId, appSecret, logLevel } = feishu.opts();
+      setLevel(logLevel);
       const client = createFeishuClient(appId, appSecret, logLevel);
       await client.connect();
       await health(client);
@@ -37,6 +39,7 @@ export function registerFeishu(program: Command): void {
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
     .action(async () => {
       const { appId, appSecret, logLevel } = feishu.opts();
+      setLevel(logLevel);
       const cloud = createFeishuClient(appId, appSecret, logLevel);
       await cloud.connect();
 
@@ -66,6 +69,7 @@ export function registerFeishu(program: Command): void {
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
     .action(async (opts) => {
       const { appId, appSecret, logLevel } = feishu.opts();
+      setLevel(logLevel);
       const cloud = createFeishuClient(appId, appSecret, logLevel);
       await cloud.connect();
       const chatOpts: ChatOptions = {};
