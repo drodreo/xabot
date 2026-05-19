@@ -245,11 +245,11 @@ describe('Bridge integration', () => {
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/gen.png', mimeType: 'image/png', sizeBytes: 50 } });
   });
 
-  it('L2: complete event → cloud.send assistantReply via sessionChatId', async () => {
+  it('L2: complete event returns acknowledge without sending', async () => {
     const chatA = channelId('chat-a');
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    const response = await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -257,7 +257,8 @@ describe('Bridge integration', () => {
       },
     });
 
-    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
+    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(cloudSendMock).not.toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
   });
 
   it('L2: notify event → cloud.send message via sessionChatId', async () => {
@@ -394,5 +395,89 @@ describe('Bridge integration', () => {
     expect(response.kind).toBe('error');
     expect(cloudCloseMock).toHaveBeenCalled();
     expect(transportDisconnectMock).toHaveBeenCalled();
+  });
+
+  // ── L6: invoke branch routes pending responses ──────────────────────────
+
+  it('L6: invoke text routes action_request response', async () => {
+    const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
+
+    // Agent sends action_request → pending
+    const eventPromise = bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'action_request',
+        requestId: 'req-invoke',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a1',
+        description: 'test',
+        alert: 'info',
+      },
+    });
+
+    // User replies 'y' via cloud message
+    cloudMessagesIter.push(makeMessage(chatA, 'y'));
+    cloudMessagesIter.stop();
+    await bridge.run();
+
+    const response = await eventPromise;
+    expect(response).toEqual({ kind: 'action', requestId: 'req-invoke', type: 'approve' });
+  });
+
+  it('L6: invoke text with invalid input sends hint', async () => {
+    const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
+
+    // Agent sends action_request → pending
+    bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'action_request',
+        requestId: 'req-invalid',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a1',
+        description: 'test',
+        alert: 'info',
+      },
+    });
+
+    // Reset cloud send count to isolate this test
+    cloudSendMock.mockClear();
+
+    // User replies with invalid command
+    cloudMessagesIter.push(makeMessage(chatA, 'invalid_command'));
+    cloudMessagesIter.stop();
+    await bridge.run();
+
+    // Should send hint
+    const hintCall = cloudSendMock.mock.calls.find((c) =>
+      c[1]?.type === 'text' && c[1]?.text?.includes('无法识别'),
+    );
+    expect(hintCall).toBeTruthy();
+  });
+
+  it('L6: invoke text routes question numeric response', async () => {
+    const chatA = channelId('chat-a');
+    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
+
+    const eventPromise = bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'question',
+        requestId: 'req-q',
+        question: 'Pick one',
+        options: ['Red', 'Green', 'Blue'],
+      },
+    });
+
+    cloudMessagesIter.push(makeMessage(chatA, '2'));
+    cloudMessagesIter.stop();
+    await bridge.run();
+
+    const response = await eventPromise;
+    expect(response).toEqual({ kind: 'question', requestId: 'req-q', type: 'answer', content: 'Green' });
   });
 });

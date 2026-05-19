@@ -525,13 +525,38 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Hello ' });
   });
 
-  it('handleEvent complete sends assistantReply to cloud via sessionChatId', async () => {
+  it('handleEvent content_part forwards to cloud regardless of stream capability', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
+    // Mock NonStreaming capability — content_part should still be forwarded
+    (bridge as any).cloud = {
+      ...((bridge as any).cloud),
+      streamCapability: () => StreamCapability.NonStreaming,
+    };
+
     await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'content_part',
+        round: 'r1',
+        pair: 'p1',
+        payload: { type: 'text', text: 'Intermediate result' },
+      },
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Intermediate result' });
+  });
+
+  it('handleEvent complete returns acknowledge without sending (content_part already forwarded)', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    const response = await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -539,7 +564,8 @@ describe('Bridge', () => {
       },
     });
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Final answer' });
+    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(cloudSend).not.toHaveBeenCalled();
   });
 
   it('handleEvent notify sends message to cloud via sessionChatId', async () => {
@@ -716,13 +742,13 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
   });
 
-  it('handleEvent complete with image in assistantReply sends image to cloud via sessionChatId', async () => {
+  it('handleEvent complete with image returns acknowledge without sending', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    const response = await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -733,8 +759,8 @@ describe('Bridge', () => {
       },
     });
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Here is the image:' });
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/result.png', mimeType: 'image/png', sizeBytes: 200 } });
+    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(cloudSend).not.toHaveBeenCalled();
   });
 
   // ── Problem 5: cloud.send failure cleans up pending ─────────────────────
@@ -823,7 +849,7 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Hi there!' });
   });
 
-  it('E2E: cloud msg → new_activity → invoke_activity → complete → cloud.send via sessionChatId', async () => {
+  it('E2E: cloud msg → invoke → content_part forwarded, complete returns acknowledge', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
@@ -837,8 +863,21 @@ describe('Bridge', () => {
     cloudMessagesIter.stop();
     await bridge.run();
 
-    // Agent completes with final reply
+    // Agent sends content_part — should be forwarded
     await bridge.handleEvent('act-e2e2', {
+      activity: 'act-e2e2',
+      event: {
+        type: 'content_part',
+        round: 'r1',
+        pair: 'p1',
+        payload: { type: 'text', text: 'pong' },
+      },
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
+
+    // Agent sends complete — should NOT send to cloud
+    const response = await bridge.handleEvent('act-e2e2', {
       activity: 'act-e2e2',
       event: {
         type: 'complete',
@@ -846,7 +885,7 @@ describe('Bridge', () => {
       },
     });
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
+    expect(response).toEqual({ kind: 'acknowledge' });
   });
 
   it('E2E: same chatId multiple messages → activity reused, events routed to sessionChatId', async () => {
@@ -957,5 +996,194 @@ describe('Bridge', () => {
     await runPromise;
 
     expect(sessionRequestCommand).not.toHaveBeenCalled();
+  });
+
+  // ── Pending queue behavior ──────────────────────────────────────────────
+
+  it('queue: second action_request queues without cloud.send', async () => {
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+
+    const p1 = bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'action_request',
+        requestId: 'req-1',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a1',
+        description: 'test',
+        alert: 'info',
+      },
+    });
+
+    // First call sent message to cloud
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+
+    const p2 = bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'action_request',
+        requestId: 'req-2',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a2',
+        description: 'test2',
+        alert: 'info',
+      },
+    });
+
+    // Second call did NOT send (queued)
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+
+    // Resolve first — should drive queue and send second
+    bridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'approve' });
+
+    const r1 = await p1;
+    expect(r1).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
+
+    // Queue drive sends second message
+    expect(cloudSend).toHaveBeenCalledTimes(2);
+
+    bridge.resolvePending('req-2', { kind: 'action', requestId: 'req-2', type: 'approve' });
+    const r2 = await p2;
+    expect(r2).toEqual({ kind: 'action', requestId: 'req-2', type: 'approve' });
+  });
+
+  it('queue: different targetKeys do not interfere', async () => {
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+    (bridge as any).bindActivity(channelId('chat-b'), userId('u2'), 'act-2');
+
+    const p1 = bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'action_request',
+        requestId: 'req-a',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a1',
+        description: 'test',
+        alert: 'info',
+      },
+    });
+    const p2 = bridge.handleEvent('act-2', {
+      activity: 'act-2',
+      event: {
+        type: 'action_request',
+        requestId: 'req-b',
+        toolName: 'bash',
+        arguments: '',
+        actionId: 'a2',
+        description: 'test',
+        alert: 'info',
+      },
+    });
+
+    // Both sent immediately (different targets)
+    expect(cloudSend).toHaveBeenCalledTimes(2);
+
+    bridge.resolvePending('req-a', { kind: 'action', requestId: 'req-a', type: 'approve' });
+    bridge.resolvePending('req-b', { kind: 'action', requestId: 'req-b', type: 'reject', reason: 'no' });
+
+    expect(await p1).toEqual({ kind: 'action', requestId: 'req-a', type: 'approve' });
+    expect(await p2).toEqual({ kind: 'action', requestId: 'req-b', type: 'reject', reason: 'no' });
+  });
+
+  // ── tryParsePendingResponse coverage ────────────────────────────────────
+
+  it('tryParsePendingResponse action_request a/y/n/t', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+
+    const event: any = {
+      type: 'action_request',
+      requestId: 'req-1',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    };
+    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'action_request', event);
+
+    expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve_always' });
+    expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '用户拒绝' });
+    expect((bridge as any).tryParsePendingResponse(item, 'n 太危险了')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '太危险了' });
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '用户取消执行' });
+    expect((bridge as any).tryParsePendingResponse(item, 'invalid')).toBeNull();
+  });
+
+  it('tryParsePendingResponse question numeric option and free text', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+
+    const event: any = {
+      type: 'question',
+      requestId: 'req-1',
+      question: 'Choose?',
+      options: ['A', 'B', 'C'],
+    };
+    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'question', event);
+
+    expect((bridge as any).tryParsePendingResponse(item, '2')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'B' });
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual({ kind: 'question', requestId: 'req-1', type: 'skip', reason: '用户取消执行' });
+    // n is no longer a skip command — treated as free text answer
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'n' });
+    expect((bridge as any).tryParsePendingResponse(item, 'no thanks')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'no thanks' });
+    expect((bridge as any).tryParsePendingResponse(item, 'free answer')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'free answer' });
+
+    // Out of range numeric
+    expect((bridge as any).tryParsePendingResponse(item, '99')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: '99' });
+  });
+
+  it('tryParsePendingResponse sensitive_info_operation collect and cancel', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+
+    const event: any = {
+      type: 'sensitive_info_operation',
+      requestId: 'req-1',
+      operation: {
+        type: 'collect',
+        items: [
+          { key: 'K1', displayText: 'Key1', hint: '', siType: 'secret' },
+          { key: 'K2', displayText: 'Key2', hint: '', siType: 'env_var' },
+        ],
+      },
+    };
+    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
+
+    const result = (bridge as any).tryParsePendingResponse(item, 'val1\nval2');
+    expect(result?.kind).toBe('sensitive_info_operation');
+    expect(result?.results).toEqual([
+      { type: 'provided', key: 'K1', value: 'val1' },
+      { type: 'provided', key: 'K2', value: 'val2' },
+    ]);
+
+    const cancelResult = (bridge as any).tryParsePendingResponse(item, 'c');
+    expect(cancelResult?.results).toEqual([
+      { type: 'collect_skipped', key: 'K1', reason: '用户取消执行' },
+      { type: 'collect_skipped', key: 'K2', reason: '用户取消执行' },
+    ]);
+  });
+
+  it('tryParsePendingResponse sensitive_info_operation delete', async () => {
+    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+
+    const event: any = {
+      type: 'sensitive_info_operation',
+      requestId: 'req-1',
+      operation: {
+        type: 'delete',
+        items: [
+          { key: 'K1', displayText: 'Key1', id: 'id1', siType: 'secret' },
+        ],
+      },
+    };
+    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
+
+    const result = (bridge as any).tryParsePendingResponse(item, 'y');
+    expect(result?.results).toEqual([{ type: 'deleted', id: 'id1' }]);
   });
 });

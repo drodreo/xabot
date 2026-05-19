@@ -8,12 +8,12 @@ const log = createLogger('chat-handler');
 
 type MediaKind = 'image' | 'audio' | 'video' | 'file';
 
-interface ParsedInput {
-  kind: 'text' | 'media' | 'complete';
-  text?: string;
-  mediaKind?: MediaKind;
-  filePath?: string;
-}
+type ParsedInput =
+  | { kind: 'text'; text?: string }
+  | { kind: 'media'; mediaKind?: MediaKind; filePath?: string }
+  | { kind: 'complete'; text?: string }
+  | { kind: 'action'; toolName: string; description: string }
+  | { kind: 'question'; question: string; options?: string[] };
 
 function parseTerminalInput(input: string): ParsedInput {
   if (input.startsWith('/image ')) return { kind: 'media', mediaKind: 'image', filePath: input.slice(7).trim() };
@@ -22,6 +22,24 @@ function parseTerminalInput(input: string): ParsedInput {
   if (input.startsWith('/file '))  return { kind: 'media', mediaKind: 'file',  filePath: input.slice(6).trim() };
   if (input === '/complete')       return { kind: 'complete' };
   if (input.startsWith('/complete ')) return { kind: 'complete', text: input.slice(10).trim() };
+  if (input.startsWith('/action ')) {
+    const rest = input.slice(8).trim();
+    const spaceIdx = rest.indexOf(' ');
+    if (spaceIdx === -1) {
+      return { kind: 'action', toolName: rest, description: rest };
+    }
+    return { kind: 'action', toolName: rest.slice(0, spaceIdx), description: rest.slice(spaceIdx + 1).trim() };
+  }
+  if (input.startsWith('/question ')) {
+    const rest = input.slice(10).trim();
+    const sepIdx = rest.indexOf('|');
+    if (sepIdx === -1) {
+      return { kind: 'question', question: rest };
+    }
+    const question = rest.slice(0, sepIdx).trim();
+    const options = rest.slice(sepIdx + 1).split('|').map(s => s.trim()).filter(Boolean);
+    return { kind: 'question', question, options };
+  }
   return { kind: 'text', text: input };
 }
 
@@ -134,9 +152,9 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
     return { kind: 'acknowledge' };
   }
 
-  private async sendEvent(session: XacppSession, event: import('xacpp').XacppEvent): Promise<void> {
-    if (!this.activityId) return;
-    await session.requestEvent({ activity: this.activityId, event });
+  private async sendEvent(session: XacppSession, event: import('xacpp').XacppEvent): Promise<XacppResponse> {
+    if (!this.activityId) return { kind: 'acknowledge' };
+    return session.requestEvent({ activity: this.activityId, event });
   }
 
   /**
@@ -159,6 +177,56 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         if (parsed.text) {
           await session.requestCommand({ message: { content: [{ type: 'text', text: parsed.text }] } });
         }
+      }
+      return;
+    }
+
+    // ── /action: simulate action_request event ──
+    if (parsed.kind === 'action') {
+      if (!this.activityId) {
+        log.warn('no active activity, ignoring /action');
+        return;
+      }
+      const requestId = crypto.randomUUID();
+      log.info('action_request [act-%s] tool=%s desc=%s', this.activityId, parsed.toolName, parsed.description);
+      const response = await this.sendEvent(session, {
+        type: 'action_request',
+        requestId,
+        toolName: parsed.toolName,
+        arguments: '',
+        actionId: crypto.randomUUID(),
+        description: parsed.description,
+        alert: 'info',
+      });
+      if (response.kind === 'action') {
+        log.info('action_response [act-%s] req=%s result=%s%s', this.activityId, response.requestId, response.type,
+          response.type === 'reject' ? ` reason=${response.reason}` : '');
+      } else {
+        log.info('action_response [act-%s] %s', this.activityId ?? 'none', response.kind);
+      }
+      return;
+    }
+
+    // ── /question: simulate question event ──
+    if (parsed.kind === 'question') {
+      if (!this.activityId) {
+        log.warn('no active activity, ignoring /question');
+        return;
+      }
+      const requestId = crypto.randomUUID();
+      log.info('question [act-%s] q=%s options=%s', this.activityId, parsed.question, parsed.options?.join(',') ?? '');
+      const response = await this.sendEvent(session, {
+        type: 'question',
+        requestId,
+        question: parsed.question,
+        options: parsed.options ?? [],
+      });
+      if (response.kind === 'question') {
+        log.info('question_response [act-%s] req=%s type=%s content=%s',
+            this.activityId, response.requestId, response.type,
+            response.type === 'answer' ? response.content : '(skip)');
+      } else {
+        log.info('question_response [act-%s] %s', this.activityId ?? 'none', response.kind);
       }
       return;
     }
