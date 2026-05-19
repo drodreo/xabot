@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createLogger } from '../../core/logger.js';
@@ -28,12 +28,20 @@ function makeHeaders(token: string, xWechatUin: string): Record<string, string> 
   };
 }
 
+const MEDIA_TYPE_NUM: Record<string, number> = {
+  image: 1,
+  video: 2,
+  file: 3,
+  audio: 4,
+};
+
 export async function uploadMedia(
   baseUrl: string,
   token: string,
   xWechatUin: string,
   filePath: string,
   mediaType: string,
+  toUserId: string,
 ): Promise<WechatUploadResult> {
   const data = await readFile(filePath);
   const md5 = createHash('md5').update(data).digest('hex');
@@ -43,17 +51,24 @@ export async function uploadMedia(
   const isMedia = mediaType === 'image' || mediaType === 'video';
   const aesKeyEncoded = isMedia ? encodeAesKeyForMedia(key) : encodeAesKeyForFile(key);
   const aesKeyHex = key.toString('hex');
+  const encryptedSize = Math.ceil((data.length + 1) / 16) * 16;
+  const filekey = randomBytes(16).toString('hex');
+  const mediaTypeNum = MEDIA_TYPE_NUM[mediaType] ?? 3;
 
   // Step 1: get upload URL
   const uploadUrlRes = await fetch(`${baseUrl}/ilink/bot/getuploadurl`, {
     method: 'POST',
     headers: makeHeaders(token, xWechatUin),
     body: JSON.stringify({
-      media_type: mediaType.toUpperCase(),
+      filekey,
+      media_type: mediaTypeNum,
+      to_user_id: toUserId,
       rawsize: data.length,
-      md5,
-      filesize: data.length,
-      aes_key: aesKeyHex,
+      rawfilemd5: md5,
+      filesize: encryptedSize,
+      no_need_thumb: true,
+      aeskey: aesKeyHex,
+      base_info: { channel_version: '2.0.0' },
     }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -65,8 +80,8 @@ export async function uploadMedia(
   const uploadUrlData = (await uploadUrlRes.json()) as {
     ret?: number;
     errcode?: number;
-    upload_full_url?: string;
-    upload_param?: { cdn_base?: string; [k: string]: unknown };
+    upload_param?: string;
+    thumb_upload_param?: string;
   };
 
   log.debug('getuploadurl OK: type=%s size=%d', mediaType, data.length);
@@ -75,17 +90,17 @@ export async function uploadMedia(
     throw new Error(`WeChat getuploadurl failed: ret=${uploadUrlData.ret}, errcode=${uploadUrlData.errcode}`);
   }
 
-  const uploadFullUrl = uploadUrlData.upload_full_url
-    ?? `${uploadUrlData.upload_param?.cdn_base ?? ''}/upload`;
-
-  if (!uploadFullUrl || !uploadFullUrl.startsWith('http')) {
-    throw new Error('WeChat getuploadurl returned no upload URL');
+  const uploadParam = uploadUrlData.upload_param;
+  if (!uploadParam) {
+    throw new Error('WeChat getuploadurl returned no upload_param');
   }
 
   // Step 2: encrypt and upload
   const encrypted = aesEcbEncrypt(data, key);
 
-  const uploadRes = await fetch(uploadFullUrl, {
+  const cdnBaseUrl = 'https://novac2c.cdn.weixin.qq.com/c2c';
+  const uploadUrl = `${cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${filekey}`;
+  const uploadRes = await fetch(uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: encrypted,

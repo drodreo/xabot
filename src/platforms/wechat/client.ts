@@ -193,7 +193,7 @@ export class WechatClient implements PlatformClient {
 
         if (filePath) {
           const mediaType = content.type === 'audio' ? 'file' : content.type;
-          const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, filePath, mediaType);
+          const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, filePath, mediaType, chatId as string);
           log.info('upload success: %s (chatId=%s)', content.type, chatId);
           const body = fromMessageContentWithUpload(chatId, content, contextToken, result);
           return this._sendBody(body);
