@@ -25,6 +25,8 @@ describe('PlatformClient interface', () => {
         return StreamCapability.NonStreaming;
       },
       async healthCheck() {},
+      async beginProcessing() {},
+      async endProcessing() {},
       async close() {},
     };
   };

@@ -44,6 +44,7 @@ export class FeishuClient implements PlatformClient {
   private messageResolve: ((msg: FeishuMessageEvent) => void) | null = null;
   private connected = false;
   readonly #abortCtrl = new AbortController();
+  private readonly activeReactions = new Map<ChannelId, { messageId: string; reactionId: string }>();
 
   constructor(config: FeishuClientConfig) {
     this.config = config;
@@ -269,6 +270,38 @@ export class FeishuClient implements PlatformClient {
     await this.fetchTenantToken();
   }
 
+  async beginProcessing(chatId: ChannelId, messageId?: MessageId): Promise<void> {
+    if (!messageId) return;
+    try {
+      const result = await this.httpClient.im.messageReaction.create({
+        path: { message_id: messageId as string },
+        data: { reaction_type: { emoji_type: 'Typing' } },
+      });
+      if (result?.data?.reaction_id) {
+        this.activeReactions.set(chatId, {
+          messageId: messageId as string,
+          reactionId: result.data.reaction_id,
+        });
+      }
+    } catch (err) {
+      log.debug('beginProcessing (reaction) failed: %s', err);
+    }
+  }
+
+  async endProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
+    const active = this.activeReactions.get(chatId);
+    if (!active) return;
+    try {
+      await this.httpClient.im.messageReaction.delete({
+        path: { message_id: active.messageId, reaction_id: active.reactionId },
+      });
+    } catch (err) {
+      log.debug('endProcessing (reaction delete) failed: %s', err);
+    } finally {
+      this.activeReactions.delete(chatId);
+    }
+  }
+
   async close(): Promise<void> {
     // Abort first so that any iterator polling abortCtrl sees the signal
     // before messageResolve is cleared, preventing a race where an iterator
@@ -283,6 +316,10 @@ export class FeishuClient implements PlatformClient {
         message: { message_id: '', chat_id: '', create_time: '', chat_type: '', message_type: '', content: '' },
       });
     }
+    for (const [chatId] of this.activeReactions) {
+      await this.endProcessing(chatId).catch(() => {});
+    }
+    this.activeReactions.clear();
     await this.wsClient.close({});
     this.connected = false;
   }

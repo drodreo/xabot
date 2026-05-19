@@ -15,6 +15,8 @@ function healthyClient(): PlatformClient {
       return SC.NonStreaming;
     },
     async healthCheck() {},
+    async beginProcessing() {},
+    async endProcessing() {},
     async close() {},
   };
 }
@@ -33,6 +35,8 @@ function unhealthyClient(reason = 'not connected'): PlatformClient {
     async healthCheck() {
       throw new Error(reason);
     },
+    async beginProcessing() {},
+    async endProcessing() {},
     async close() {},
   };
 }

@@ -109,6 +109,8 @@ describe('Bridge integration', () => {
           messages: () => cloudMessagesIter.iter(),
           streamCapability: vi.fn(),
           healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
           close: cloudCloseMock,
         } as never,
       },

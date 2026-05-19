@@ -23,6 +23,10 @@ vi.mock('@larksuiteoapi/node-sdk', () => {
       message: {
         create: mockState.httpMessageCreate,
       },
+      messageReaction: {
+        create: vi.fn().mockResolvedValue({ code: 0, data: { reaction_id: 'r-1' } }),
+        delete: vi.fn().mockResolvedValue({ code: 0 }),
+      },
     };
   }
 

@@ -21,5 +21,9 @@ export interface PlatformClient {
   messages(): AsyncIterable<Message>;
   streamCapability(): StreamCapability;
   healthCheck(): Promise<void>;
+  /** Notify user that the message has been received and is being processed. */
+  beginProcessing(chatId: ChannelId, messageId?: MessageId): Promise<void>;
+  /** Processing complete, clear the indicator. */
+  endProcessing(chatId: ChannelId, messageId?: MessageId): Promise<void>;
   close(): Promise<void>;
 }

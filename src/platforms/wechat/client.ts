@@ -22,6 +22,7 @@ export interface WechatConfig {
 const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const DEFAULT_POLL_TIMEOUT_MS = 35_000;
 const MAX_RETRY_DELAY_MS = 30_000;
+const TYPING_TICKET_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * WeChat iLink Bot platform client using HTTP long polling.
@@ -43,6 +44,7 @@ export class WechatClient implements PlatformClient {
   private readonly contextTokenStore = new Map<string, string>();
   private readonly messageBuffer: Message[] = [];
   private messageResolve: ((msg: Message) => void) | null = null;
+  private readonly typingTickets = new Map<string, { ticket: string; expiresAt: number }>();
 
   private connected = false;
   private abortCtrl: AbortController | null = null;
@@ -288,6 +290,51 @@ export class WechatClient implements PlatformClient {
     }
   }
 
+  // --------------------------------------------------------------------------
+  // Typing indicator
+  // --------------------------------------------------------------------------
+
+  private async fetchTypingTicket(userId: string): Promise<string> {
+    const cached = this.typingTickets.get(userId);
+    if (cached && Date.now() < cached.expiresAt) return cached.ticket;
+
+    const res = await this.post('/ilink/bot/getconfig', {
+      ilink_user_id: userId,
+      base_info: { channel_version: '2.0.0' },
+    });
+    if (!res.ok) throw new Error(`getconfig failed: HTTP ${res.status}`);
+
+    const data = (await res.json()) as { typing_ticket?: string };
+    if (!data.typing_ticket) throw new Error('getconfig returned no typing_ticket');
+
+    this.typingTickets.set(userId, {
+      ticket: data.typing_ticket,
+      expiresAt: Date.now() + TYPING_TICKET_TTL_MS,
+    });
+    return data.typing_ticket;
+  }
+
+  private async sendTypingStatus(userId: string, status: 1 | 2): Promise<void> {
+    try {
+      const ticket = await this.fetchTypingTicket(userId);
+      await this.post('/ilink/bot/sendtyping', {
+        ilink_user_id: userId,
+        typing_ticket: ticket,
+        status,
+      });
+    } catch (err) {
+      log.debug('sendTypingStatus (status=%d) failed: %s', status, err);
+    }
+  }
+
+  async beginProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
+    await this.sendTypingStatus(chatId as string, 1);
+  }
+
+  async endProcessing(chatId: ChannelId, _messageId?: MessageId): Promise<void> {
+    await this.sendTypingStatus(chatId as string, 2);
+  }
+
   async close(): Promise<void> {
     if (!this.abortCtrl) return;
     this.abortCtrl.abort();
@@ -299,5 +346,6 @@ export class WechatClient implements PlatformClient {
     this.abortCtrl = null;
     this.messageBuffer.length = 0;
     this.contextTokenStore.clear();
+    this.typingTickets.clear();
   }
 }

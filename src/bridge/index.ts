@@ -5,6 +5,7 @@ import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, Xa
 import { parseInput } from './input-parser.js';
 import { createLogger } from '../core/logger.js';
 const log = createLogger('Bridge');
+import type { MessageId } from '../core/types.js';
 
 /**
  * Bridge — bidirectional message loop between cloud platform and XACPP agents.
@@ -85,9 +86,30 @@ export class Bridge {
     this.establishHandler = handler;
   }
 
+  private readonly processingMessages = new Map<ChannelId, MessageId>();
+
+  private async beginProcessingIfNeeded(chatId: ChannelId, messageId: MessageId): Promise<void> {
+    if (!this.cloud) return;
+    this.processingMessages.set(chatId, messageId);
+    try {
+      await this.cloud.beginProcessing(chatId, messageId);
+    } catch (err) {
+      log.debug('beginProcessing failed: %s', err);
+    }
+  }
+
   /** Send a single ContentPart to the cloud platform. */
   private async _sendContentPart(chatId: ChannelId, part: ContentPart): Promise<void> {
     if (!this.cloud) return;
+    const processingMsgId = this.processingMessages.get(chatId);
+    if (processingMsgId) {
+      this.processingMessages.delete(chatId);
+      try {
+        await this.cloud.endProcessing(chatId, processingMsgId);
+      } catch (err) {
+        log.debug('endProcessing failed: %s', err);
+      }
+    }
     if (part.type === 'text') {
       log.debug('→ cloud send: text (chatId=%s)', chatId);
       await this.cloud.send(chatId, { type: 'text', text: part.text });
@@ -268,6 +290,7 @@ export class Bridge {
                       messages: [{ type: 'text', text: parsed.prompt }],
                     },
                   });
+                  await this.beginProcessingIfNeeded(chatId, msg.id);
                 }
               }
               continue;
@@ -341,6 +364,7 @@ export class Bridge {
                   messages: [{ type: 'text', text: parsed.text }],
                 },
               });
+              await this.beginProcessingIfNeeded(chatId, msg.id);
               continue;
             }
           }
@@ -385,6 +409,7 @@ export class Bridge {
         await this.session.requestCommand({
           invoke_activity: { activity: activityId, messages: parts },
         });
+        await this.beginProcessingIfNeeded(chatId, msg.id);
       }
     } catch (err) {
       log.error('cloud message loop error: %s', err);
@@ -407,6 +432,10 @@ export class Bridge {
       resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
     }
     this.pendingResponses.clear();
+    for (const [chatId, msgId] of this.processingMessages) {
+      await this.cloud?.endProcessing(chatId, msgId).catch(() => {});
+    }
+    this.processingMessages.clear();
     if (this.cloudReadyResolve) {
       this.cloudReadyResolve();
       this.cloudReadyResolve = null;
