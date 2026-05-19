@@ -2,7 +2,44 @@ import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandl
 import type { XacppSession } from 'xacpp';
 import { StdinRouter } from './stdin-router.js';
 import { createLogger } from '../core/logger.js';
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 const log = createLogger('chat-handler');
+
+type MediaKind = 'image' | 'audio' | 'video' | 'file';
+
+interface ParsedInput {
+  kind: 'text' | 'media' | 'complete';
+  text?: string;
+  mediaKind?: MediaKind;
+  filePath?: string;
+}
+
+function parseTerminalInput(input: string): ParsedInput {
+  if (input.startsWith('/image ')) return { kind: 'media', mediaKind: 'image', filePath: input.slice(7).trim() };
+  if (input.startsWith('/audio ')) return { kind: 'media', mediaKind: 'audio', filePath: input.slice(7).trim() };
+  if (input.startsWith('/video ')) return { kind: 'media', mediaKind: 'video', filePath: input.slice(7).trim() };
+  if (input.startsWith('/file '))  return { kind: 'media', mediaKind: 'file',  filePath: input.slice(6).trim() };
+  if (input === '/complete')       return { kind: 'complete' };
+  if (input.startsWith('/complete ')) return { kind: 'complete', text: input.slice(10).trim() };
+  return { kind: 'text', text: input };
+}
+
+const EXT_MIME: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json',
+};
+
+function fileToContentPart(kind: MediaKind, filePath: string): ContentPart {
+  const abs = resolve(filePath);
+  const stat = statSync(abs);
+  const ext = abs.substring(abs.lastIndexOf('.')).toLowerCase();
+  const mimeType = EXT_MIME[ext] ?? 'application/octet-stream';
+  const source: import('xacpp').FileRef = { localUri: abs, remoteUrl: '', mimeType, sizeBytes: stat.size };
+  return { type: kind, source } as ContentPart;
+}
 
 /**
  * Initiator-side XacppSessionHandler for the `chat` CLI subcommand.
@@ -97,17 +134,52 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
     return { kind: 'acknowledge' };
   }
 
+  private async sendEvent(session: XacppSession, event: import('xacpp').XacppEvent): Promise<void> {
+    if (!this.activityId) return;
+    await session.requestEvent({ activity: this.activityId, event });
+  }
+
   /**
-   * Send a text reply from the terminal user to the Responder,
-   * which routes it through Bridge → cloud.send() → Feishu/WeChat.
+   * Send a reply from the terminal user to the Responder,
+   * routing text/media through Bridge → cloud.send(),
+   * or simulating an Agent completion via /complete.
    */
   async sendReply(session: XacppSession, text: string): Promise<void> {
-    log.info('invoke_activity [act-%s][> OUT]: %s', this.activityId ?? 'none', text);
+    const parsed = parseTerminalInput(text);
 
-    const contentPart: ContentPart = { type: 'text', text };
+    // ── /complete: simulate invoke completion ─────────────────────────
+    if (parsed.kind === 'complete') {
+      const assistantReply: ContentPart[] = [];
+      if (parsed.text) assistantReply.push({ type: 'text', text: parsed.text });
+      log.info('complete [act-%s]', this.activityId ?? 'none');
+      if (this.activityId) {
+        await this.sendEvent(session, { type: 'complete', assistantReply });
+      } else {
+        // No activity — fall back to message command
+        if (parsed.text) {
+          await session.requestCommand({ message: { content: [{ type: 'text', text: parsed.text }] } });
+        }
+      }
+      return;
+    }
 
-    await session.requestCommand({
-      message: { content: [contentPart] },
-    });
+    // ── Build ContentPart ─────────────────────────────────────────────
+    let part: ContentPart;
+    if (parsed.kind === 'media') {
+      part = fileToContentPart(parsed.mediaKind!, parsed.filePath!);
+      log.info('%s: %s (%d bytes)', parsed.mediaKind, parsed.filePath, (part as any).source.sizeBytes);
+    } else {
+      part = { type: 'text', text: parsed.text! };
+      log.info('invoke_activity [act-%s][> OUT]: %s', this.activityId ?? 'none', parsed.text);
+    }
+
+    // ── Send ──────────────────────────────────────────────────────────
+    if (this.activityId) {
+      // Scenario 2: has activity → requestEvent
+      await this.sendEvent(session, { type: 'content_part', round: '', pair: '', payload: part });
+    } else {
+      // Scenario 1: no activity → message command
+      await session.requestCommand({ message: { content: [part] } });
+    }
   }
 }
