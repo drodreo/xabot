@@ -97,7 +97,7 @@ describe('FeishuClient', () => {
       expect(result).toBe('om_sent_msg');
     });
 
-    it('sends an image message', async () => {
+    it('falls back to placeholder when image has no localUri', async () => {
       mockState.httpMessageCreate.mockResolvedValue({
         code: 0,
         data: { message_id: 'om_img' },
@@ -109,14 +109,14 @@ describe('FeishuClient', () => {
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
-          msg_type: 'image',
-          content: JSON.stringify({ image_key: 'img_v2_abc' }),
+          msg_type: 'text',
+          content: JSON.stringify({ text: '[image 无法发送]' }),
         },
         params: { receive_id_type: 'chat_id' },
       });
     });
 
-    it('sends a file message', async () => {
+    it('falls back to placeholder when file has no localUri', async () => {
       mockState.httpMessageCreate.mockResolvedValue({
         code: 0,
         data: { message_id: 'om_file' },
@@ -131,8 +131,8 @@ describe('FeishuClient', () => {
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
-          msg_type: 'file',
-          content: JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'file_v2_xyz' }),
+          msg_type: 'text',
+          content: JSON.stringify({ text: '[file 无法发送]' }),
         },
         params: { receive_id_type: 'chat_id' },
       });

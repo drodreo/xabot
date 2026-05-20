@@ -26,7 +26,7 @@ describe('toStandardMessage', () => {
       to_user_id: 'bot_123',
       message_type: 1,
       context_token: 'ctx_2',
-      item_list: [{ type: 2, image_item: { cdn: { download_url: 'https://cdn.example.com/img.jpg' } } }],
+      item_list: [{ type: 2, image_item: { media: { full_url: 'https://cdn.example.com/img.jpg' } } }],
       msg_id: 'msg_456',
     };
 
@@ -40,7 +40,7 @@ describe('toStandardMessage', () => {
       to_user_id: 'bot_123',
       message_type: 1,
       context_token: 'ctx_3',
-      item_list: [{ type: 4, file_item: { file_name: 'report.pdf', cdn: { download_url: 'https://cdn.example.com/report.pdf' } } }],
+      item_list: [{ type: 4, file_item: { file_name: 'report.pdf', media: { full_url: 'https://cdn.example.com/report.pdf' } } }],
       msg_id: 'msg_789',
     };
 
@@ -60,6 +60,90 @@ describe('toStandardMessage', () => {
 
     const result = toStandardMessage(msg);
     expect(result.content).toEqual({ type: 'text', text: '[unsupported]' });
+  });
+
+  it('handles missing image_item as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_img',
+      item_list: [{ type: 2 } as any],
+      msg_id: 'msg_img_missing',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[image]' });
+  });
+
+  it('handles missing image_item.media as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_img',
+      item_list: [{ type: 2, image_item: {} } as any],
+      msg_id: 'msg_img_media_missing',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[image]' });
+  });
+
+  it('handles empty image full_url as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_img',
+      item_list: [{ type: 2, image_item: { media: { full_url: '' } } } as any],
+      msg_id: 'msg_img_empty',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[image]' });
+  });
+
+  it('handles missing file_item as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_carol',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_file',
+      item_list: [{ type: 4 } as any],
+      msg_id: 'msg_file_missing',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[file]' });
+  });
+
+  it('handles missing voice_item.media as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_audio',
+      item_list: [{ type: 3, voice_item: {} } as any],
+      msg_id: 'msg_voice_cdn_missing',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[audio]' });
+  });
+
+  it('handles missing video_item.media as text fallback', () => {
+    const msg = {
+      from_user_id: 'user_bob',
+      to_user_id: 'bot_123',
+      message_type: 1,
+      context_token: 'ctx_video',
+      item_list: [{ type: 5, video_item: {} } as any],
+      msg_id: 'msg_video_cdn_missing',
+    };
+
+    const result = toStandardMessage(msg);
+    expect(result.content).toEqual({ type: 'text', text: '[video]' });
   });
 
   it('handles missing msg_id with timestamp fallback', () => {
@@ -114,7 +198,7 @@ describe('extractText', () => {
   });
 
   it('returns empty string when no text item', () => {
-    const msg = { item_list: [{ type: 2, image_item: { cdn: { download_url: '' } } }] } as any;
+    const msg = { item_list: [{ type: 2, image_item: { media: { full_url: '' } } }] } as any;
     expect(extractText(msg)).toBe('');
   });
 });

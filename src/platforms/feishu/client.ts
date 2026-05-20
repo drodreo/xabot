@@ -12,7 +12,7 @@ import type { FileRef } from 'xacpp';
 import { StreamCapability, channelId, messageId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
-import { uploadImage, uploadFile, fetchToTemp, safeUnlink } from './upload.js';
+import { uploadImage, uploadFile } from './upload.js';
 import { createLogger } from '../../core/logger.js';
 const log = createLogger('FeishuClient');
 
@@ -117,29 +117,7 @@ export class FeishuClient implements PlatformClient {
       }
     }
 
-    if (src.remoteUrl) {
-      // Try sending directly (remoteUrl may be an existing key)
-      try {
-        return await this._doSend(fromMessageContent(chatId, content));
-      } catch (err) {
-        log.info('direct send failed, trying fetch+upload: %s', err);
-        // Direct send failed — try fetch + upload
-        let tmpPath: string | undefined;
-        try {
-          tmpPath = await fetchToTemp(src.remoteUrl);
-          return await this._uploadAndSend(chatId, content, tmpPath);
-        } catch (err2) {
-          log.warn('fetch+upload failed, fallback to text: %s', err2);
-          return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type}]` }));
-        } finally {
-          if (tmpPath) {
-            await safeUnlink(tmpPath);
-          }
-        }
-      }
-    }
-
-    log.warn('send: %s has no source, sending placeholder', content.type);
+    log.warn('send: %s has no localUri, sending placeholder', content.type);
     return this._doSend(fromMessageContent(chatId, { type: 'text', text: `[${content.type} 无法发送]` }));
   }
 

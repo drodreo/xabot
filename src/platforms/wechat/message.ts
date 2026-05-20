@@ -7,6 +7,8 @@ import {
 } from '../../core/types.js';
 import { randomUUID } from 'node:crypto';
 import type { WechatUploadResult } from './upload.js';
+import { createLogger } from '../../core/logger.js';
+const log = createLogger('WechatMessage');
 
 // --------------------------------------------------------------------------
 // Weixin message types (iLink bot protocol)
@@ -25,10 +27,10 @@ export interface WeixinMessage {
 
 export type WeixinMessageItem =
   | { type: 1; text_item: { text: string } }
-  | { type: 2; image_item: { cdn: { download_url: string } } }
-  | { type: 3; voice_item: { cdn: { download_url: string } } }
-  | { type: 4; file_item: { file_name: string; cdn: { download_url: string } } }
-  | { type: 5; video_item: { cdn: { download_url: string } } }
+  | { type: 2; image_item: { media: { full_url: string } } }
+  | { type: 3; voice_item: { media: { full_url: string } } }
+  | { type: 4; file_item: { file_name?: string; media: { full_url: string } } }
+  | { type: 5; video_item: { media: { full_url: string } } }
   | { type: number; [key: string]: unknown };
 
 export interface WeixinSendMessageBody {
@@ -185,18 +187,42 @@ function parseItem(item?: WeixinMessageItem): MessageContent {
   switch (item.type) {
     case 1:
       return { type: 'text', text: (item as { text_item: { text: string } }).text_item.text };
-    case 2:
-      return { type: 'image', source: { localUri: '', remoteUrl: (item as { image_item: { cdn: { download_url: string } } }).image_item.cdn.download_url, mimeType: '', sizeBytes: 0 } };
-    case 3:
-      return { type: 'audio', source: { localUri: '', remoteUrl: (item as { voice_item: { cdn: { download_url: string } } }).voice_item.cdn.download_url, mimeType: '', sizeBytes: 0 } };
-    case 4: {
-      const fileItem = item as { file_item: { file_name: string; cdn: { download_url: string } } };
-      return fileItem.file_item.file_name
-        ? { type: 'file', name: fileItem.file_item.file_name, source: { localUri: '', remoteUrl: fileItem.file_item.cdn.download_url, mimeType: '', sizeBytes: 0 } }
-        : { type: 'file', source: { localUri: '', remoteUrl: fileItem.file_item.cdn.download_url, mimeType: '', sizeBytes: 0 } };
+    case 2: {
+      const url = (item as any).image_item?.media?.full_url;
+      if (!url) {
+        log.warn('parseItem: image missing url, item=%j', item);
+        return { type: 'text', text: '[image]' };
+      }
+      return { type: 'image', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
     }
-    case 5:
-      return { type: 'video', source: { localUri: '', remoteUrl: (item as { video_item: { cdn: { download_url: string } } }).video_item.cdn.download_url, mimeType: '', sizeBytes: 0 } };
+    case 3: {
+      const url = (item as any).voice_item?.media?.full_url;
+      if (!url) {
+        log.warn('parseItem: voice missing url, item=%j', item);
+        return { type: 'text', text: '[audio]' };
+      }
+      return { type: 'audio', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
+    }
+    case 4: {
+      const fileItem = item as any;
+      const url = fileItem.file_item?.media?.full_url;
+      if (!url) {
+        log.warn('parseItem: file missing url, item=%j', item);
+        return { type: 'text', text: '[file]' };
+      }
+      const fileName = fileItem.file_item?.file_name;
+      return fileName
+        ? { type: 'file', name: fileName, source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } }
+        : { type: 'file', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
+    }
+    case 5: {
+      const url = (item as any).video_item?.media?.full_url;
+      if (!url) {
+        log.warn('parseItem: video missing url, item=%j', item);
+        return { type: 'text', text: '[video]' };
+      }
+      return { type: 'video', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
+    }
     default:
       return { type: 'text', text: '[unsupported]' };
   }

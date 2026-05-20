@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bridge } from './index.js';
 import { channelId, messageId, userId, type ChannelId, type Message } from '../core/types.js';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
+import { fetchToTemp } from '../core/fs-utils.js';
+
+vi.mock('../core/fs-utils.js', () => ({
+  fetchToTemp: vi.fn(),
+}));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,7 @@ describe('Bridge', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchToTemp).mockReset();
     cloudMessagesIter = new ManualIter<Message>();
     cloudSend.mockResolvedValue(messageId('mid-1'));
     cloudClose.mockResolvedValue(undefined);
@@ -188,7 +194,9 @@ describe('Bridge', () => {
     expect(sessionRequestCommand).not.toHaveBeenCalled();
   });
 
-  it('image content is converted to ContentPart', async () => {
+  it('inbound image downloads to temp and carries localUri + requireOrganized', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345 });
+
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
@@ -196,7 +204,7 @@ describe('Bridge', () => {
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
       id: messageId('msg-1'),
@@ -205,16 +213,29 @@ describe('Bridge', () => {
       content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
+    cloudMessagesIter.push(msg(chatA, 'describe this'));
     cloudMessagesIter.stop();
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
-    expect(invokeCall.invoke_activity.messages[0].type).toBe('image');
-    expect(invokeCall.invoke_activity.messages[0].source.remoteUrl).toBe('https://example.com/img.png');
+    expect(vi.mocked(fetchToTemp)).toHaveBeenCalledWith('https://example.com/img.png');
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages[0].type).toBe('image');
+    expect(messages[0].source.localUri).toBe('/tmp/xabot_img.png');
+    expect(messages[0].source.sha256).toBe('deadbeef0000');
+    expect(messages[0].source.sizeBytes).toBe(12345);
+    expect(messages[0].source.requireOrganized).toBe(true);
+    expect(messages[0].source.remoteUrl).toBe('https://example.com/img.png');
+    expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
   });
 
-  it('file content is converted to text ContentPart', async () => {
+  it('inbound file downloads to temp and carries localUri + requireOrganized', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_doc.pdf', sha256: 'cafebabe1111', sizeBytes: 67890 });
+
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
@@ -222,7 +243,7 @@ describe('Bridge', () => {
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
       id: messageId('msg-1'),
@@ -231,13 +252,57 @@ describe('Bridge', () => {
       content: { type: 'file', source: { localUri: '', remoteUrl: 'https://example.com/doc.pdf', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
+    cloudMessagesIter.push(msg(chatA, 'summarize'));
     cloudMessagesIter.stop();
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
-    expect(invokeCall.invoke_activity.messages[0].type).toBe('file');
-    expect(invokeCall.invoke_activity.messages[0].source.remoteUrl).toBe('https://example.com/doc.pdf');
+    expect(vi.mocked(fetchToTemp)).toHaveBeenCalledWith('https://example.com/doc.pdf');
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages[0].type).toBe('file');
+    expect(messages[0].source.localUri).toBe('/tmp/xabot_doc.pdf');
+    expect(messages[0].source.sha256).toBe('cafebabe1111');
+    expect(messages[0].source.sizeBytes).toBe(67890);
+    expect(messages[0].source.requireOrganized).toBe(true);
+    expect(messages[0].source.remoteUrl).toBe('https://example.com/doc.pdf');
+    expect(messages[1]).toEqual({ type: 'text', text: 'summarize' });
+  });
+
+  it('inbound image fetch failure falls back to text placeholder', async () => {
+    vi.mocked(fetchToTemp).mockRejectedValue(new Error('network down'));
+
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand));
+    bridge.markEstablished();
+
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
+      .mockResolvedValue({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push({
+      id: messageId('msg-1'),
+      chatId: chatA,
+      senderId: userId('u1'),
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
+      direction: 'incoming',
+    });
+    cloudMessagesIter.push(msg(chatA, 'describe this'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages[0]).toEqual({ type: 'text', text: '[image]' });
+    expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
   });
 
   it('last_activity returns activity_ready → no new_activity', async () => {
@@ -1185,5 +1250,209 @@ describe('Bridge', () => {
 
     const result = (bridge as any).tryParsePendingResponse(item, 'y');
     expect(result?.results).toEqual([{ type: 'deleted', id: 'id1' }]);
+  });
+
+  // ── Thinking and tool-use indicators ────────────────────────────────────
+
+  it('first think event sends thinking indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'think', requestId: 't1' },
+    } as any);
+
+    const thinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
+    expect(thinkCall).toBeTruthy();
+  });
+
+  it('consecutive think events do not repeat indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'think', requestId: 't1' },
+    } as any);
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'think', requestId: 't2' },
+    } as any);
+
+    const thinkCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
+    expect(thinkCalls).toHaveLength(1);
+  });
+
+  it('think then content_part ends thinking and forwards content', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'think', requestId: 't1' },
+    } as any);
+
+    cloudSend.mockClear();
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: {
+        type: 'content_part',
+        round: 'r1',
+        pair: 'p1',
+        payload: { type: 'text', text: 'result' },
+      },
+    });
+
+    const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
+    expect(endThinkCall).toBeTruthy();
+    const contentCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text === 'result');
+    expect(contentCall).toBeTruthy();
+  });
+
+  it('think then tool_use ends thinking and starts tool indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'think', requestId: 't1' },
+    } as any);
+
+    cloudSend.mockClear();
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+    } as any);
+
+    const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
+    expect(endThinkCall).toBeTruthy();
+    const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
+    expect(toolCall).toBeTruthy();
+  });
+
+  it('first tool_use event sends tool indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+    } as any);
+
+    const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
+    expect(toolCall).toBeTruthy();
+  });
+
+  it('consecutive tool_use events do not repeat indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+    } as any);
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'tool_use', requestId: 'tu2', toolName: 'bash', arguments: '{}' },
+    } as any);
+
+    const toolCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
+    expect(toolCalls).toHaveLength(1);
+  });
+
+  it('pair_complete sends tool duration indicator', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+    } as any);
+
+    cloudSend.mockClear();
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'pair_complete', round: 'r1', pair: 'p1' },
+    } as any);
+
+    const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
+    expect(completeCall).toBeTruthy();
+  });
+
+  it('pair_complete without tool_use does not send duration', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'pair_complete', round: 'r1', pair: 'p1' },
+    } as any);
+
+    const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
+    expect(completeCall).toBeFalsy();
+  });
+
+  it('full ReAct cycle: think → tool_use → pair_complete → complete', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'think', requestId: 't1' } } as any);
+    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' } } as any);
+    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'pair_complete', round: 'r1', pair: 'p1' } } as any);
+    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] } });
+
+    const texts = cloudSend.mock.calls
+      .filter((c) => c[1]?.type === 'text')
+      .map((c) => c[1].text);
+
+    expect(texts.some((t: string) => t.includes('正在思考'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('思考用时'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('行动中'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('行动用时'))).toBe(true);
+  });
+
+  it('processing indicator lifecycle: begin on invoke, end on complete', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    sessionRequestCommand.mockResolvedValue({ kind: 'acknowledge' });
+    cloudMessagesIter.push(msg(chatA, 'hello'));
+    cloudMessagesIter.stop();
+    await bridge.run();
+
+    expect((bridge as any).cloud.beginProcessing).toHaveBeenCalled();
+
+    (bridge as any).cloud.endProcessing.mockClear();
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] },
+    });
+
+    expect((bridge as any).cloud.endProcessing).toHaveBeenCalled();
   });
 });

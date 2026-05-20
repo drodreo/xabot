@@ -3,7 +3,7 @@ import type { ChannelId, MessageId, UserId, Message, MessageContent } from '../.
 import { StreamCapability, messageId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, type WeixinMessage } from './message.js';
-import { uploadMedia, fetchToTemp, safeUnlink } from './upload.js';
+import { uploadMedia } from './upload.js';
 import { randomBytes } from 'node:crypto';
 import { createLogger } from '../../core/logger.js';
 const log = createLogger('WechatClient');
@@ -180,37 +180,20 @@ export class WechatClient implements PlatformClient {
       effective = content;
     } else {
       const src = content.source;
-      let filePath: string | undefined;
-      let tmpPath: string | undefined;
 
-      try {
-        if (src.localUri) {
-          filePath = src.localUri;
-        } else if (src.remoteUrl) {
-          tmpPath = await fetchToTemp(src.remoteUrl);
-          filePath = tmpPath;
-        }
-
-        if (filePath) {
+      if (src.localUri) {
+        try {
           const mediaType = content.type === 'audio' ? 'file' : content.type;
-          const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, filePath, mediaType, chatId as string);
+          const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, src.localUri, mediaType, chatId as string);
           log.info('upload success: %s (chatId=%s)', content.type, chatId);
           const body = fromMessageContentWithUpload(chatId, content, contextToken, result);
           return this._sendBody(body);
+        } catch (err) {
+          log.warn('upload failed, fallback to text: %s', err);
+          effective = { type: 'text', text: `[${content.type}]` };
         }
-      } catch (err) {
-        log.warn('upload/fetch failed, fallback to text: %s', err);
-        // upload or fetch failed — fall through to text fallback
-      } finally {
-        if (tmpPath) {
-          await safeUnlink(tmpPath);
-        }
-      }
-
-      if (src.localUri || src.remoteUrl) {
-        effective = { type: 'text', text: `[${content.type}]` };
       } else {
-        log.warn('send: %s has no source, sending placeholder', content.type);
+        log.warn('send: %s has no localUri, sending placeholder', content.type);
         effective = { type: 'text', text: `[${content.type} 无法发送]` };
       }
     }

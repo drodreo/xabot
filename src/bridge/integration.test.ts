@@ -19,6 +19,11 @@ import {
   type Message,
 } from '../core/types.js';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
+import { fetchToTemp } from '../core/fs-utils.js';
+
+vi.mock('../core/fs-utils.js', () => ({
+  fetchToTemp: vi.fn(),
+}));
 
 // ─── ManualIter ───────────────────────────────────────────────────────────────
 
@@ -86,6 +91,7 @@ describe('Bridge integration', () => {
   let transportDisconnectMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.mocked(fetchToTemp).mockReset();
     cloudMessagesIter = new ManualIter<Message>();
     cloudSendMock = vi.fn().mockResolvedValue(messageId('mid-1'));
     cloudCloseMock = vi.fn().mockResolvedValue(undefined);
@@ -152,25 +158,36 @@ describe('Bridge integration', () => {
   });
 
   it('L1: cloud image message → image ContentPart', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345 });
     const chatA = channelId('chat-a');
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
       .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValue({ kind: 'acknowledge' });
 
     cloudMessagesIter.push({
       id: messageId('msg-img'),
       chatId: chatA,
-      senderId: userId('u1'),
+      senderId: userId('u-sender'),
       content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
       direction: 'incoming',
     });
+    cloudMessagesIter.push(makeMessage(chatA, 'describe this'));
     cloudMessagesIter.stop();
 
     await bridge.run();
 
-    const invokeCall = sessionRequestCommand.mock.calls[2]![0] as any;
-    expect(invokeCall.invoke_activity.messages[0].type).toBe('image');
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages[0].type).toBe('image');
+    expect(messages[0].source.localUri).toBe('/tmp/xabot_img.png');
+    expect(messages[0].source.sha256).toBe('deadbeef0000');
+    expect(messages[0].source.sizeBytes).toBe(12345);
+    expect(messages[0].source.requireOrganized).toBe(true);
+    expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
   });
 
   it('L1: failed new_activity → message skipped', async () => {
@@ -479,5 +496,147 @@ describe('Bridge integration', () => {
 
     const response = await eventPromise;
     expect(response).toEqual({ kind: 'question', requestId: 'req-q', type: 'answer', content: 'Green' });
+  });
+
+  // ── Media buffering ─────────────────────────────────────────────────────
+
+  it('image message buffers, text merge invokes with media first', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_photo.png', sha256: 'beefcafe2222', sizeBytes: 54321 });
+    const chatA = channelId('chat-a');
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-img', agent: 'test' })
+      .mockResolvedValue({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push({
+      id: messageId('msg-img'),
+      chatId: chatA,
+      senderId: userId('u-sender'),
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/photo.png', mimeType: 'image/png', sizeBytes: 100 } },
+      direction: 'incoming',
+    });
+    cloudMessagesIter.push(makeMessage(chatA, 'describe this'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[0].type).toBe('image');
+    expect(messages[0].source.localUri).toBe('/tmp/xabot_photo.png');
+    expect(messages[0].source.sha256).toBe('beefcafe2222');
+    expect(messages[0].source.sizeBytes).toBe(54321);
+    expect(messages[0].source.requireOrganized).toBe(true);
+    expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
+  });
+
+  it('multiple files buffer then merge on text', async () => {
+    vi.mocked(fetchToTemp).mockImplementation((url: string) => {
+      const name = url.split('/').pop()!;
+      return Promise.resolve({ localUri: `/tmp/xabot_${name}`, sha256: `hash_${name}`, sizeBytes: name.length * 100 });
+    });
+    const chatA = channelId('chat-a');
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-f', agent: 'test' })
+      .mockResolvedValue({ kind: 'acknowledge' });
+
+    for (let i = 0; i < 3; i++) {
+      cloudMessagesIter.push({
+        id: messageId(`msg-f${i}`),
+        chatId: chatA,
+        senderId: userId('u-sender'),
+        content: { type: 'file', source: { localUri: '', remoteUrl: `https://example.com/doc${i}.pdf`, mimeType: 'application/pdf', sizeBytes: 100 } },
+        direction: 'incoming',
+      });
+    }
+    cloudMessagesIter.push(makeMessage(chatA, 'summarize'));
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages).toHaveLength(4);
+    expect(messages[0].type).toBe('file');
+    expect(messages[0].source.localUri).toBe('/tmp/xabot_doc0.pdf');
+    expect(messages[0].source.sha256).toBe('hash_doc0.pdf');
+    expect(messages[0].source.sizeBytes).toBe(800);
+    expect(messages[0].source.requireOrganized).toBe(true);
+    expect(messages[1].type).toBe('file');
+    expect(messages[1].source.localUri).toBe('/tmp/xabot_doc1.pdf');
+    expect(messages[1].source.sha256).toBe('hash_doc1.pdf');
+    expect(messages[1].source.sizeBytes).toBe(800);
+    expect(messages[1].source.requireOrganized).toBe(true);
+    expect(messages[2].type).toBe('file');
+    expect(messages[2].source.localUri).toBe('/tmp/xabot_doc2.pdf');
+    expect(messages[2].source.sha256).toBe('hash_doc2.pdf');
+    expect(messages[2].source.sizeBytes).toBe(800);
+    expect(messages[2].source.requireOrganized).toBe(true);
+    expect(messages[3]).toEqual({ type: 'text', text: 'summarize' });
+  });
+
+  it('media buffering is isolated by sender', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_a.png', sha256: 'hash_a', sizeBytes: 100 });
+    const chatA = channelId('chat-a');
+    sessionRequestCommand
+      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
+      .mockResolvedValue({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push({
+      id: messageId('msg-sender-a'),
+      chatId: chatA,
+      senderId: userId('sender-a'),
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/a.png', mimeType: 'image/png', sizeBytes: 100 } },
+      direction: 'incoming',
+    });
+    cloudMessagesIter.push({
+      id: messageId('msg-sender-b'),
+      chatId: chatA,
+      senderId: userId('sender-b'),
+      content: { type: 'text', text: 'hello from b' },
+      direction: 'incoming',
+    });
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    const invokeCall = sessionRequestCommand.mock.calls.find(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCall).toBeTruthy();
+    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual({ type: 'text', text: 'hello from b' });
+  });
+
+  it('media-only messages never invoke', async () => {
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_only.png', sha256: 'hash_only', sizeBytes: 200 });
+    const chatA = channelId('chat-a');
+    sessionRequestCommand.mockResolvedValue({ kind: 'acknowledge' });
+
+    cloudMessagesIter.push({
+      id: messageId('msg-only-img'),
+      chatId: chatA,
+      senderId: userId('u-sender'),
+      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/photo.png', mimeType: 'image/png', sizeBytes: 100 } },
+      direction: 'incoming',
+    });
+    cloudMessagesIter.stop();
+
+    await bridge.run();
+
+    const invokeCalls = sessionRequestCommand.mock.calls.filter(
+      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+    );
+    expect(invokeCalls).toHaveLength(0);
   });
 });

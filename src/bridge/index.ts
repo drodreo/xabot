@@ -5,6 +5,7 @@ import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, Xa
 import { parseInput } from './input-parser.js';
 import { createLogger } from '../core/logger.js';
 const log = createLogger('Bridge');
+import { fetchToTemp } from '../core/fs-utils.js';
 import type { MessageId } from '../core/types.js';
 
 interface PendingItem {
@@ -48,6 +49,9 @@ export class Bridge {
 
   /** targetKey (chatId:senderId) → pending queue state */
   private readonly pendingQueues = new Map<string, PendingQueue>();
+
+  /** targetKey → buffered media ContentParts awaiting next text invoke */
+  private readonly pendingMediaByTarget = new Map<string, ContentPart[]>();
 
   private abortCtrl = new AbortController();
   private closed = false;
@@ -254,12 +258,21 @@ export class Bridge {
     if (oldActivityId) this.activityToTarget.delete(oldActivityId);
   }
 
-  /** activityId → messageId being processed */
-  private readonly processingByActivity = new Map<string, MessageId>();
+  /** activityId → state (processingMessageId, thinkingStart, toolActiveStart) */
+  private readonly activityStates = new Map<string, {
+    processingMessageId?: MessageId;
+    thinkingStart?: number;
+    toolActiveStart?: number;
+  }>();
 
   private async beginProcessingIfNeeded(chatId: ChannelId, senderId: UserId, activityId: string, messageId: MessageId): Promise<void> {
     if (!this.cloud) return;
-    this.processingByActivity.set(activityId, messageId);
+    let state = this.activityStates.get(activityId);
+    if (!state) {
+      state = {};
+      this.activityStates.set(activityId, state);
+    }
+    state.processingMessageId = messageId;
     try {
       await this.cloud.beginProcessing(chatId, senderId, messageId);
     } catch (err) {
@@ -269,9 +282,10 @@ export class Bridge {
 
   private async endProcessingForActivity(chatId: ChannelId, senderId: UserId, activityId: string): Promise<void> {
     if (!this.cloud) return;
-    const msgId = this.processingByActivity.get(activityId);
-    if (!msgId) return;
-    this.processingByActivity.delete(activityId);
+    const state = this.activityStates.get(activityId);
+    const msgId = state?.processingMessageId;
+    if (msgId === undefined) return;
+    delete state!.processingMessageId;
     try {
       await this.cloud.endProcessing(chatId, senderId, msgId);
     } catch (err) {
@@ -279,10 +293,22 @@ export class Bridge {
     }
   }
 
+  private async endThinking(chatId: ChannelId, activityId: string): Promise<void> {
+    const state = this.activityStates.get(activityId);
+    if (!state?.thinkingStart) return;
+    const start = state.thinkingStart;
+    delete state.thinkingStart;
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    try {
+      await this.cloud!.send(chatId, { type: 'text', text: `💭 思考用时 ${elapsed}s` });
+    } catch (err) {
+      log.debug('endThinking send failed: %s', err);
+    }
+  }
+
   /** Send a single ContentPart to the cloud platform. */
   private async _sendContentPart(chatId: ChannelId, senderId: UserId, activityId: string, part: ContentPart): Promise<void> {
     if (!this.cloud) return;
-    await this.endProcessingForActivity(chatId, senderId, activityId);
     if (part.type === 'text') {
       log.debug('→ cloud send: text (chatId=%s)', chatId);
       await this.cloud.send(chatId, { type: 'text', text: part.text });
@@ -319,7 +345,33 @@ export class Bridge {
     if (!target) return { kind: 'acknowledge' };
     const { chatId } = target;
 
+    // Non-think events end the thinking phase
+    if (event.event.type !== 'think') {
+      const state = this.activityStates.get(activityId);
+      if (state?.thinkingStart) {
+        await this.endThinking(chatId, activityId);
+      }
+    }
+
     switch (event.event.type) {
+      case 'think': {
+        if (!chatId) return { kind: 'acknowledge' };
+        let state = this.activityStates.get(activityId);
+        if (!state) {
+          state = {};
+          this.activityStates.set(activityId, state);
+        }
+        if (state.thinkingStart === undefined) {
+          state.thinkingStart = Date.now();
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: '💭 正在思考...' });
+          } catch (err) {
+            log.debug('think indicator send failed: %s', err);
+          }
+        }
+        return { kind: 'acknowledge' };
+      }
+
       case 'content_delta': {
         if (!chatId) return { kind: 'acknowledge' };
         // content_delta is only emitted in streaming mode — forward only on streaming platforms
@@ -340,7 +392,7 @@ export class Bridge {
       }
 
       case 'complete': {
-        // TODO: content_part already forwarded incrementally; complete's assistantReply may overlap
+        await this.endProcessingForActivity(chatId, target.senderId, activityId);
         return { kind: 'acknowledge' };
       }
 
@@ -413,6 +465,40 @@ export class Bridge {
       case 'info':
       case 'warn':
       case 'error': {
+        return { kind: 'acknowledge' };
+      }
+
+      case 'tool_use': {
+        if (!chatId) return { kind: 'acknowledge' };
+        let state = this.activityStates.get(activityId);
+        if (!state) {
+          state = {};
+          this.activityStates.set(activityId, state);
+        }
+        if (state.toolActiveStart === undefined) {
+          state.toolActiveStart = Date.now();
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: '🔧 行动中...' });
+          } catch (err) {
+            log.debug('tool_use indicator send failed: %s', err);
+          }
+        }
+        return { kind: 'acknowledge' };
+      }
+
+      case 'pair_complete': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const state = this.activityStates.get(activityId);
+        if (state?.toolActiveStart !== undefined) {
+          const start = state.toolActiveStart;
+          delete state.toolActiveStart;
+          const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: `🔧 行动用时 ${elapsed}s` });
+          } catch (err) {
+            log.debug('pair_complete send failed: %s', err);
+          }
+        }
         return { kind: 'acknowledge' };
       }
 
@@ -603,10 +689,15 @@ export class Bridge {
                 }
                 this.bindActivity(chatId, senderId, activityId);
               }
+              const invokeKey = this.targetKey(chatId, senderId);
+              const bufferedMedia = this.pendingMediaByTarget.get(invokeKey) ?? [];
+              if (bufferedMedia.length > 0) {
+                this.pendingMediaByTarget.delete(invokeKey);
+              }
               await this.session.requestCommand({
                 invoke_activity: {
                   activity: activityId,
-                  messages: [{ type: 'text', text: parsed.text }],
+                  messages: [...bufferedMedia, { type: 'text', text: parsed.text }],
                 },
               });
               await this.beginProcessingIfNeeded(chatId, senderId, activityId, msg.id);
@@ -615,46 +706,31 @@ export class Bridge {
           }
         }
 
-        // ── Non-text messages: existing behavior ──────────────────────────
-        let activityId = this.getActivityForUser(chatId, senderId);
-        if (!activityId) {
-          const lastResponse = await this.session.requestCommand('last_activity');
-          if (lastResponse.kind === 'activity_ready') {
-            activityId = lastResponse.activity;
-          } else {
-            const createResponse = await this.session.requestCommand({
-              new_activity: { title: '' },
-            });
-            if (createResponse.kind === 'activity_ready') {
-              activityId = createResponse.activity;
-            } else {
-              continue;
-            }
+        // ── Non-text messages: download + buffer for next text invoke ────────
+        let part: ContentPart;
+        const src = msg.content.source;
+        if (src.localUri) {
+          part = { ...msg.content } as ContentPart;
+        } else if (src.remoteUrl) {
+          try {
+            const fetched = await fetchToTemp(src.remoteUrl);
+            part = { ...msg.content, source: { ...src, localUri: fetched.localUri, sha256: fetched.sha256, sizeBytes: fetched.sizeBytes, requireOrganized: true } } as ContentPart;
+          } catch (err) {
+            log.warn('fetchToTemp failed for inbound %s: %s', msg.content.type, err);
+            part = { type: 'text', text: `[${msg.content.type}]` };
           }
-          this.bindActivity(chatId, senderId, activityId);
+        } else {
+          part = { type: 'text', text: `[${msg.content.type}]` };
         }
 
-        const parts: ContentPart[] = [];
-        switch (msg.content.type) {
-          case 'image':
-            parts.push({ type: 'image', source: msg.content.source });
-            break;
-          case 'audio':
-            parts.push({ type: 'audio', source: msg.content.source });
-            break;
-          case 'video':
-            parts.push({ type: 'video', source: msg.content.source });
-            break;
-          case 'file':
-            parts.push({ type: 'file', source: msg.content.source });
-            break;
+        const mediaKey = this.targetKey(chatId, senderId);
+        let buffered = this.pendingMediaByTarget.get(mediaKey);
+        if (!buffered) {
+          buffered = [];
+          this.pendingMediaByTarget.set(mediaKey, buffered);
         }
-
-        log.debug('← cloud recv: %s (chatId=%s, parts=%d)', msg.content.type, chatId, parts.length);
-        await this.session.requestCommand({
-          invoke_activity: { activity: activityId, messages: parts },
-        });
-        await this.beginProcessingIfNeeded(chatId, senderId, activityId, msg.id);
+        buffered.push(part);
+        log.debug('← cloud recv: %s (chatId=%s, buffered=%d)', msg.content.type, chatId, buffered.length);
       }
     } catch (err) {
       log.error('cloud message loop error: %s', err);
@@ -681,13 +757,16 @@ export class Bridge {
       }
     }
     this.pendingQueues.clear();
-    for (const [activityId, msgId] of this.processingByActivity) {
-      const target = this.activityToTarget.get(activityId);
-      if (target) {
-        await this.cloud?.endProcessing(target.chatId, target.senderId, msgId).catch(() => {});
+    this.pendingMediaByTarget.clear();
+    for (const [activityId, state] of this.activityStates) {
+      if (state.processingMessageId !== undefined) {
+        const target = this.activityToTarget.get(activityId);
+        if (target) {
+          await this.cloud?.endProcessing(target.chatId, target.senderId, state.processingMessageId).catch(() => {});
+        }
       }
     }
-    this.processingByActivity.clear();
+    this.activityStates.clear();
     this.chatUserToActivity.clear();
     this.activityToTarget.clear();
     if (this.cloudReadyResolve) {
