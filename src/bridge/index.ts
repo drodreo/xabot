@@ -257,11 +257,12 @@ export class Bridge {
     if (oldActivityId) this.activityToTarget.delete(oldActivityId);
   }
 
-  /** activityId → state (processingMessageId, thinkingStart, toolActiveStart) */
+  /** activityId → state (processingMessageId, thinkingStart, toolActiveStart, expressingStart) */
   private readonly activityStates = new Map<string, {
     processingMessageId?: MessageId;
     thinkingStart?: number;
     toolActiveStart?: number;
+    expressingStart?: number;
   }>();
 
   private async beginProcessingIfNeeded(chatId: ChannelId, senderId: UserId, activityId: string, messageId: MessageId): Promise<void> {
@@ -292,17 +293,13 @@ export class Bridge {
     }
   }
 
-  private async endThinking(chatId: ChannelId, activityId: string): Promise<void> {
+  private async endThinking(_chatId: ChannelId, activityId: string): Promise<void> {
     const state = this.activityStates.get(activityId);
     if (!state?.thinkingStart) return;
     const start = state.thinkingStart;
     delete state.thinkingStart;
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    try {
-      await this.cloud!.send(chatId, { type: 'text', text: `💭 思考用时 ${elapsed}s` });
-    } catch (err) {
-      log.debug('endThinking send failed: %s', err);
-    }
+    // Elapsed time kept for future optimization; no longer sent to cloud.
+    void ((Date.now() - start) / 1000).toFixed(1);
   }
 
   /** Send a single ContentPart to the cloud platform. */
@@ -352,6 +349,14 @@ export class Bridge {
       }
     }
 
+    // Non-content_delta events clear expressing phase
+    if (event.event.type !== 'content_delta') {
+      const state = this.activityStates.get(activityId);
+      if (state?.expressingStart !== undefined) {
+        delete state.expressingStart;
+      }
+    }
+
     switch (event.event.type) {
       case 'think': {
         if (!chatId) return { kind: 'acknowledge' };
@@ -376,6 +381,19 @@ export class Bridge {
         // content_delta is only emitted in streaming mode — forward only on streaming platforms
         if (this.cloud!.streamCapability() === StreamCapability.NonStreaming) {
           return { kind: 'acknowledge' };
+        }
+        let state = this.activityStates.get(activityId);
+        if (!state) {
+          state = {};
+          this.activityStates.set(activityId, state);
+        }
+        if (state.expressingStart === undefined) {
+          state.expressingStart = Date.now();
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: '正在组织表达...' });
+          } catch (err) {
+            log.debug('expressing indicator send failed: %s', err);
+          }
         }
         const payload = event.event.payload as ContentPart;
         await this._sendContentPart(chatId, target.senderId, activityId, payload);
@@ -461,9 +479,21 @@ export class Bridge {
         return pendingPromise;
       }
 
-      case 'info':
-      case 'warn':
+      case 'info': {
+        if (!chatId) return { kind: 'acknowledge' };
+        await this.cloud.send(chatId, { type: 'text', text: `ℹ️ ${event.event.content}` });
+        return { kind: 'acknowledge' };
+      }
+
+      case 'warn': {
+        if (!chatId) return { kind: 'acknowledge' };
+        await this.cloud.send(chatId, { type: 'text', text: `⚠️ ${event.event.content}` });
+        return { kind: 'acknowledge' };
+      }
+
       case 'error': {
+        if (!chatId) return { kind: 'acknowledge' };
+        await this.cloud.send(chatId, { type: 'text', text: `❌ ${event.event.content}` });
         return { kind: 'acknowledge' };
       }
 
@@ -491,12 +521,8 @@ export class Bridge {
         if (state?.toolActiveStart !== undefined) {
           const start = state.toolActiveStart;
           delete state.toolActiveStart;
-          const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: `🔧 行动用时 ${elapsed}s` });
-          } catch (err) {
-            log.debug('pair_complete send failed: %s', err);
-          }
+          // Elapsed time kept for future optimization; no longer sent to cloud.
+          void ((Date.now() - start) / 1000).toFixed(1);
         }
         return { kind: 'acknowledge' };
       }

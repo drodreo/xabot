@@ -639,13 +639,46 @@ describe('Bridge', () => {
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Heads up!' });
   });
 
-  it('handleEvent info/warn/error logs but does not send to cloud', async () => {
+  it('handleEvent info sends prefixed message to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'info', title: 'test', content: 'just info' },
-    });
+      event: { type: 'info', title: 't', content: 'info msg' },
+    } as any);
 
-    expect(cloudSend).not.toHaveBeenCalled();
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'ℹ️ info msg' });
+  });
+
+  it('handleEvent warn sends prefixed message to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'warn', title: 't', content: 'warn msg' },
+    } as any);
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '⚠️ warn msg' });
+  });
+
+  it('handleEvent error sends prefixed message to cloud', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: 'act-1',
+      event: { type: 'error', title: 't', content: 'error msg' },
+    } as any);
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '❌ error msg' });
   });
 
   it('handleEvent without sessionChatId returns acknowledge without sending', async () => {
@@ -1299,10 +1332,10 @@ describe('Bridge', () => {
       },
     });
 
-    const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
-    expect(endThinkCall).toBeTruthy();
     const contentCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text === 'result');
     expect(contentCall).toBeTruthy();
+    const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
+    expect(endThinkCall).toBeFalsy();
   });
 
   it('think then tool_use ends thinking and starts tool indicator', async () => {
@@ -1324,7 +1357,7 @@ describe('Bridge', () => {
     } as any);
 
     const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
-    expect(endThinkCall).toBeTruthy();
+    expect(endThinkCall).toBeFalsy();
     const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
     expect(toolCall).toBeTruthy();
   });
@@ -1363,7 +1396,7 @@ describe('Bridge', () => {
     expect(toolCalls).toHaveLength(1);
   });
 
-  it('pair_complete sends tool duration indicator', async () => {
+  it('pair_complete does not send tool duration indicator', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
@@ -1382,7 +1415,7 @@ describe('Bridge', () => {
     } as any);
 
     const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
-    expect(completeCall).toBeTruthy();
+    expect(completeCall).toBeFalsy();
   });
 
   it('pair_complete without tool_use does not send duration', async () => {
@@ -1416,9 +1449,9 @@ describe('Bridge', () => {
       .map((c) => c[1].text);
 
     expect(texts.some((t: string) => t.includes('正在思考'))).toBe(true);
-    expect(texts.some((t: string) => t.includes('思考用时'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('思考用时'))).toBe(false);
     expect(texts.some((t: string) => t.includes('行动中'))).toBe(true);
-    expect(texts.some((t: string) => t.includes('行动用时'))).toBe(true);
+    expect(texts.some((t: string) => t.includes('行动用时'))).toBe(false);
   });
 
   it('processing indicator lifecycle: begin on invoke, end on complete', async () => {
