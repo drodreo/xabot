@@ -9,8 +9,6 @@ import {
   generateAesKey,
   encodeAesKeyForMedia,
   encodeAesKeyForFile,
-  decodeAesKeyForFile,
-  decodeAesKeyForMedia,
 } from './crypto.js';
 
 export interface WechatUploadResult {
@@ -127,31 +125,6 @@ export async function uploadMedia(
     rawMd5: md5,
     rawSize: data.length,
   };
-}
-
-export async function downloadMedia(
-  downloadUrl: string,
-  aesKeyEncoded: string,
-  aesKeyType: 'media' | 'file',
-  destPath: string,
-): Promise<void> {
-  const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(60_000) });
-  if (!res.ok) {
-    throw new Error(`WeChat download failed: HTTP ${res.status}`);
-  }
-
-  log.debug('download: %s → %s (%s)', downloadUrl.slice(0, 40), destPath, aesKeyType);
-
-  const encrypted = Buffer.from(await res.arrayBuffer());
-
-  const decodedKey = aesKeyType === 'media'
-    ? decodeAesKeyForMedia(aesKeyEncoded)
-    : decodeAesKeyForFile(aesKeyEncoded);
-
-  const decrypted = aesEcbDecrypt(encrypted, decodedKey);
-
-  await mkdir(dirname(destPath), { recursive: true });
-  await writeFile(destPath, decrypted);
 }
 
 

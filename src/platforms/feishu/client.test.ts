@@ -3,6 +3,21 @@ import { FeishuClient } from './client.js';
 import { StreamCapability, channelId } from '../../core/types.js';
 import type { FeishuMessageEvent } from './message.js';
 
+vi.mock('../../core/fs-utils.js', () => ({
+  saveTemp: vi.fn(),
+}));
+
+vi.mock('./upload.js', async (importOriginal) => {
+  const mod = await importOriginal() as any;
+  return {
+    ...mod,
+    downloadMessageResource: vi.fn(),
+  };
+});
+
+import { saveTemp } from '../../core/fs-utils.js';
+import { downloadMessageResource } from './upload.js';
+
 // Mock state shared between mock factory and test code
 const mockState = {
   wsClientStart: vi.fn<() => Promise<void>>(),
@@ -50,6 +65,8 @@ describe('FeishuClient', () => {
     mockState.wsClientClose.mockResolvedValue(undefined);
     mockState.httpMessageCreate.mockReset();
     mockState.eventDispatcherRegister.mockReset().mockReturnThis();
+    vi.mocked(saveTemp).mockReset();
+    vi.mocked(downloadMessageResource).mockReset();
   });
 
   describe('constructor', () => {
@@ -211,6 +228,194 @@ describe('FeishuClient', () => {
       expect(result).toHaveLength(1);
       expect(result[0].content).toEqual({ type: 'text', text: 'incoming message' });
       expect(result[0].id).toBe('om_incoming');
+    });
+
+    it('downloads image resource with type=image and enriches source', async () => {
+      vi.mocked(downloadMessageResource).mockResolvedValue(undefined);
+      vi.mocked(saveTemp).mockResolvedValue({
+        localUri: '/tmp/feishu_img.png',
+        sha256: 'abc123',
+        sizeBytes: 1024,
+        mimeType: 'image/png',
+      });
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+
+      const mockEvent: FeishuMessageEvent = {
+        sender: {
+          sender_id: { open_id: 'ou_sender' },
+          sender_type: 'user',
+        },
+        message: {
+          message_id: 'om_img',
+          chat_id: 'oc_chat_incoming',
+          create_time: '2025-01-01T00:00:00Z',
+          chat_type: 'group',
+          message_type: 'image',
+          content: JSON.stringify({ image_key: 'img_v2_abc' }),
+        },
+      };
+
+      const collectPromise = (async () => {
+        const msgs: any[] = [];
+        for await (const msg of client.messages()) {
+          msgs.push(msg);
+          break;
+        }
+        return msgs;
+      })();
+
+      const registeredHandler = mockState.eventDispatcherRegister.mock.calls.at(-1)?.[0]?.['im.message.receive_v1'];
+      if (registeredHandler) {
+        await registeredHandler(mockEvent);
+      }
+
+      const result = await collectPromise;
+      expect(result).toHaveLength(1);
+      expect(result[0].content.type).toBe('image');
+      expect(result[0].content.source.localUri).toBe('/tmp/feishu_img.png');
+      expect(result[0].content.source.sha256).toBe('abc123');
+      expect(result[0].content.source.mimeType).toBe('image/png');
+      expect(result[0].content.source.requireOrganized).toBe(true);
+      expect(vi.mocked(downloadMessageResource)).toHaveBeenCalledWith(
+        expect.any(Object),
+        'om_img',
+        'img_v2_abc',
+        'image',
+        expect.stringContaining('img_v2_abc'),
+      );
+    });
+
+    it('downloads file resource with type=file and passes name hint', async () => {
+      vi.mocked(downloadMessageResource).mockResolvedValue(undefined);
+      vi.mocked(saveTemp).mockResolvedValue({
+        localUri: '/tmp/feishu_doc.pdf',
+        sha256: 'def456',
+        sizeBytes: 2048,
+        mimeType: 'application/pdf',
+      });
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+
+      const mockEvent: FeishuMessageEvent = {
+        sender: {
+          sender_id: { open_id: 'ou_sender' },
+          sender_type: 'user',
+        },
+        message: {
+          message_id: 'om_file',
+          chat_id: 'oc_chat_incoming',
+          create_time: '2025-01-01T00:00:00Z',
+          chat_type: 'group',
+          message_type: 'file',
+          content: JSON.stringify({ file_key: 'file_v2_xyz', file_name: 'report.pdf' }),
+        },
+      };
+
+      const collectPromise = (async () => {
+        const msgs: any[] = [];
+        for await (const msg of client.messages()) {
+          msgs.push(msg);
+          break;
+        }
+        return msgs;
+      })();
+
+      const registeredHandler = mockState.eventDispatcherRegister.mock.calls.at(-1)?.[0]?.['im.message.receive_v1'];
+      if (registeredHandler) {
+        await registeredHandler(mockEvent);
+      }
+
+      const result = await collectPromise;
+      expect(result).toHaveLength(1);
+      expect(result[0].content.type).toBe('file');
+      expect(result[0].content.source.localUri).toBe('/tmp/feishu_doc.pdf');
+      expect(vi.mocked(downloadMessageResource)).toHaveBeenCalledWith(
+        expect.any(Object),
+        'om_file',
+        'file_v2_xyz',
+        'file',
+        expect.stringContaining('file_v2_xyz'),
+      );
+      expect(vi.mocked(saveTemp)).toHaveBeenCalledWith(expect.any(String), 'report.pdf');
+    });
+
+    it('falls back to text placeholder on download failure', async () => {
+      vi.mocked(downloadMessageResource).mockRejectedValue(new Error('network error'));
+
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+
+      const mockEvent: FeishuMessageEvent = {
+        sender: {
+          sender_id: { open_id: 'ou_sender' },
+          sender_type: 'user',
+        },
+        message: {
+          message_id: 'om_img',
+          chat_id: 'oc_chat_incoming',
+          create_time: '2025-01-01T00:00:00Z',
+          chat_type: 'group',
+          message_type: 'image',
+          content: JSON.stringify({ image_key: 'img_v2_abc' }),
+        },
+      };
+
+      const collectPromise = (async () => {
+        const msgs: any[] = [];
+        for await (const msg of client.messages()) {
+          msgs.push(msg);
+          break;
+        }
+        return msgs;
+      })();
+
+      const registeredHandler = mockState.eventDispatcherRegister.mock.calls.at(-1)?.[0]?.['im.message.receive_v1'];
+      if (registeredHandler) {
+        await registeredHandler(mockEvent);
+      }
+
+      const result = await collectPromise;
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toEqual({ type: 'text', text: '[image接收失败：network error]' });
+      expect(result[0].fallback).toBe(true);
+    });
+
+    it('falls back when media has no remoteUrl', async () => {
+      const client = new FeishuClient({ appId: 'app-123', appSecret: 'secret-456' });
+
+      const mockEvent: FeishuMessageEvent = {
+        sender: {
+          sender_id: { open_id: 'ou_sender' },
+          sender_type: 'user',
+        },
+        message: {
+          message_id: 'om_img',
+          chat_id: 'oc_chat_incoming',
+          create_time: '2025-01-01T00:00:00Z',
+          chat_type: 'group',
+          message_type: 'image',
+          content: JSON.stringify({ image_key: '' }),
+        },
+      };
+
+      const collectPromise = (async () => {
+        const msgs: any[] = [];
+        for await (const msg of client.messages()) {
+          msgs.push(msg);
+          break;
+        }
+        return msgs;
+      })();
+
+      const registeredHandler = mockState.eventDispatcherRegister.mock.calls.at(-1)?.[0]?.['im.message.receive_v1'];
+      if (registeredHandler) {
+        await registeredHandler(mockEvent);
+      }
+
+      const result = await collectPromise;
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toEqual({ type: 'text', text: '[image接收失败：缺少下载地址]' });
+      expect(result[0].fallback).toBe(true);
     });
   });
 

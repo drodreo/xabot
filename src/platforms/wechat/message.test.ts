@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { toStandardMessage, fromMessageContent, extractContextToken, extractText } from './message.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { toStandardMessage, fromMessageContent, extractContextToken, extractText, processInboundMedia } from './message.js';
+import { downloadToBuffer, saveTemp } from '../../core/fs-utils.js';
+import { decryptBuffer } from './crypto.js';
+
+vi.mock('../../core/fs-utils.js', () => ({
+  downloadToBuffer: vi.fn(),
+  saveTemp: vi.fn(),
+}));
+
+vi.mock('./crypto.js', () => ({
+  decryptBuffer: vi.fn(),
+}));
 
 describe('toStandardMessage', () => {
   it('converts a text message', () => {
@@ -20,7 +31,7 @@ describe('toStandardMessage', () => {
     expect(result.direction).toBe('incoming');
   });
 
-  it('converts an image message', () => {
+  it('non-text items return empty text (media handled by processInboundMedia)', () => {
     const msg = {
       from_user_id: 'user_bob',
       to_user_id: 'bot_123',
@@ -31,119 +42,7 @@ describe('toStandardMessage', () => {
     };
 
     const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'image', source: { localUri: '', remoteUrl: 'https://cdn.example.com/img.jpg', mimeType: '', sizeBytes: 0 } });
-  });
-
-  it('converts a file message', () => {
-    const msg = {
-      from_user_id: 'user_carol',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_3',
-      item_list: [{ type: 4, file_item: { file_name: 'report.pdf', media: { full_url: 'https://cdn.example.com/report.pdf' } } }],
-      msg_id: 'msg_789',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'file', name: 'report.pdf', source: { localUri: '', remoteUrl: 'https://cdn.example.com/report.pdf', mimeType: '', sizeBytes: 0 } });
-  });
-
-  it('handles unknown item type as fallback', () => {
-    const msg = {
-      from_user_id: 'user_dave',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_4',
-      item_list: [{ type: 99, unknown: {} } as any],
-      msg_id: 'msg_unknown',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[unsupported]' });
-  });
-
-  it('handles missing image_item as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_bob',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_img',
-      item_list: [{ type: 2 } as any],
-      msg_id: 'msg_img_missing',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[image]' });
-  });
-
-  it('handles missing image_item.media as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_bob',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_img',
-      item_list: [{ type: 2, image_item: {} } as any],
-      msg_id: 'msg_img_media_missing',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[image]' });
-  });
-
-  it('handles empty image full_url as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_bob',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_img',
-      item_list: [{ type: 2, image_item: { media: { full_url: '' } } } as any],
-      msg_id: 'msg_img_empty',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[image]' });
-  });
-
-  it('handles missing file_item as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_carol',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_file',
-      item_list: [{ type: 4 } as any],
-      msg_id: 'msg_file_missing',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[file]' });
-  });
-
-  it('handles missing voice_item.media as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_bob',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_audio',
-      item_list: [{ type: 3, voice_item: {} } as any],
-      msg_id: 'msg_voice_cdn_missing',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[audio]' });
-  });
-
-  it('handles missing video_item.media as text fallback', () => {
-    const msg = {
-      from_user_id: 'user_bob',
-      to_user_id: 'bot_123',
-      message_type: 1,
-      context_token: 'ctx_video',
-      item_list: [{ type: 5, video_item: {} } as any],
-      msg_id: 'msg_video_cdn_missing',
-    };
-
-    const result = toStandardMessage(msg);
-    expect(result.content).toEqual({ type: 'text', text: '[video]' });
+    expect(result.content).toEqual({ type: 'text', text: '' });
   });
 
   it('handles missing msg_id with timestamp fallback', () => {
@@ -200,5 +99,108 @@ describe('extractText', () => {
   it('returns empty string when no text item', () => {
     const msg = { item_list: [{ type: 2, image_item: { media: { full_url: '' } } }] } as any;
     expect(extractText(msg)).toBe('');
+  });
+});
+
+// --------------------------------------------------------------------------
+// processInboundMedia
+// --------------------------------------------------------------------------
+
+describe('processInboundMedia', () => {
+  beforeEach(() => {
+    vi.mocked(downloadToBuffer).mockReset();
+    vi.mocked(decryptBuffer).mockReset();
+    vi.mocked(saveTemp).mockReset();
+  });
+
+  it('image: downloads, decrypts with aesKey, saves, returns content', async () => {
+    vi.mocked(downloadToBuffer).mockResolvedValue(Buffer.from('encrypted'));
+    vi.mocked(decryptBuffer).mockReturnValue(Buffer.from('decrypted'));
+    vi.mocked(saveTemp).mockResolvedValue({ localUri: '/tmp/img.png', sha256: 'abc', sizeBytes: 10, mimeType: 'image/png' });
+
+    const item = { type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png', aes_key: 'key123' } } } as any;
+    const result = await processInboundMedia(item);
+
+    expect(downloadToBuffer).toHaveBeenCalledWith('https://cdn.com/img.png');
+    expect(decryptBuffer).toHaveBeenCalledWith(Buffer.from('encrypted'), 'key123');
+    expect(saveTemp).toHaveBeenCalledWith(Buffer.from('decrypted'), 'https://cdn.com/img.png', undefined);
+    expect(result).toEqual({
+      type: 'image',
+      source: { localUri: '/tmp/img.png', sha256: 'abc', sizeBytes: 10, mimeType: 'image/png', requireOrganized: true, remoteUrl: 'https://cdn.com/img.png' },
+    });
+  });
+
+  it('skips decrypt when no aesKey', async () => {
+    vi.mocked(downloadToBuffer).mockResolvedValue(Buffer.from('plaintext'));
+    vi.mocked(saveTemp).mockResolvedValue({ localUri: '/tmp/img.png', sha256: 'def', sizeBytes: 10, mimeType: 'image/png' });
+
+    const item = { type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png' } } } as any;
+    const result = await processInboundMedia(item);
+
+    expect(decryptBuffer).not.toHaveBeenCalled();
+    expect(saveTemp).toHaveBeenCalledWith(Buffer.from('plaintext'), 'https://cdn.com/img.png', undefined);
+  });
+
+  it('file: passes file_name as hint', async () => {
+    vi.mocked(downloadToBuffer).mockResolvedValue(Buffer.from('encrypted'));
+    vi.mocked(decryptBuffer).mockReturnValue(Buffer.from('decrypted'));
+    vi.mocked(saveTemp).mockResolvedValue({ localUri: '/tmp/doc.pdf', sha256: 'xyz', sizeBytes: 20, mimeType: 'application/pdf' });
+
+    const item = { type: 4, file_item: { file_name: 'report.pdf', media: { full_url: 'https://cdn.com/doc.pdf', aes_key: 'key456' } } } as any;
+    const result = await processInboundMedia(item);
+
+    expect(decryptBuffer).toHaveBeenCalledWith(Buffer.from('encrypted'), 'key456');
+    expect(saveTemp).toHaveBeenCalledWith(Buffer.from('decrypted'), 'https://cdn.com/doc.pdf', 'report.pdf');
+    expect(result).toEqual({
+      type: 'file',
+      name: 'report.pdf',
+      source: { localUri: '/tmp/doc.pdf', sha256: 'xyz', sizeBytes: 20, mimeType: 'application/pdf', requireOrganized: true, remoteUrl: 'https://cdn.com/doc.pdf' },
+    });
+  });
+
+  it('voice maps to audio type', async () => {
+    vi.mocked(downloadToBuffer).mockResolvedValue(Buffer.from('voice'));
+    vi.mocked(saveTemp).mockResolvedValue({ localUri: '/tmp/voice.opus', sha256: 'v1', sizeBytes: 5, mimeType: 'audio/opus' });
+
+    const item = { type: 3, voice_item: { media: { full_url: 'https://cdn.com/voice.opus' } } } as any;
+    const result = await processInboundMedia(item);
+
+    expect(result).toEqual({
+      type: 'audio',
+      source: { localUri: '/tmp/voice.opus', sha256: 'v1', sizeBytes: 5, mimeType: 'audio/opus', requireOrganized: true, remoteUrl: 'https://cdn.com/voice.opus' },
+    });
+  });
+
+  it('throws on download failure', async () => {
+    vi.mocked(downloadToBuffer).mockRejectedValue(new Error('network down'));
+
+    const item = { type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png' } } } as any;
+    await expect(processInboundMedia(item)).rejects.toThrow('图片接收失败：network down');
+  });
+
+  it('throws on decrypt failure', async () => {
+    vi.mocked(downloadToBuffer).mockResolvedValue(Buffer.from('encrypted'));
+    vi.mocked(decryptBuffer).mockImplementation(() => { throw new Error('bad key'); });
+
+    const item = { type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png', aes_key: 'bad' } } } as any;
+    await expect(processInboundMedia(item)).rejects.toThrow('图片接收失败：bad key');
+  });
+
+  it('throws when missing url', async () => {
+    const item = { type: 2, image_item: { media: {} } } as any;
+    await expect(processInboundMedia(item)).rejects.toThrow('图片接收失败：缺少下载地址');
+    expect(downloadToBuffer).not.toHaveBeenCalled();
+  });
+
+  it('throws on unknown media type', async () => {
+    const item = { type: 99 } as any;
+    await expect(processInboundMedia(item)).rejects.toThrow('未知媒体类型: 99');
+  });
+
+  it('returns empty text for text item', async () => {
+    const item = { type: 1, text_item: { text: 'hello' } } as any;
+    const result = await processInboundMedia(item);
+
+    expect(result).toEqual({ type: 'text', text: '' });
   });
 });

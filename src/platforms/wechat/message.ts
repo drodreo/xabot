@@ -8,6 +8,8 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { WechatUploadResult } from './upload.js';
 import { createLogger } from '../../core/logger.js';
+import { downloadToBuffer, saveTemp } from '../../core/fs-utils.js';
+import { decryptBuffer } from './crypto.js';
 const log = createLogger('WechatMessage');
 
 // --------------------------------------------------------------------------
@@ -27,10 +29,10 @@ export interface WeixinMessage {
 
 export type WeixinMessageItem =
   | { type: 1; text_item: { text: string } }
-  | { type: 2; image_item: { media: { full_url: string } } }
-  | { type: 3; voice_item: { media: { full_url: string } } }
-  | { type: 4; file_item: { file_name?: string; media: { full_url: string } } }
-  | { type: 5; video_item: { media: { full_url: string } } }
+  | { type: 2; image_item: { media: { full_url: string; aes_key?: string } } }
+  | { type: 3; voice_item: { media: { full_url: string; aes_key?: string } } }
+  | { type: 4; file_item: { file_name?: string; media: { full_url: string; aes_key?: string } } }
+  | { type: 5; video_item: { media: { full_url: string; aes_key?: string } } }
   | { type: number; [key: string]: unknown };
 
 export interface WeixinSendMessageBody {
@@ -181,51 +183,10 @@ export function fromMessageContentWithUpload(
 // --------------------------------------------------------------------------
 
 function parseItem(item?: WeixinMessageItem): MessageContent {
-  if (!item) {
+  if (!item || item.type !== 1) {
     return { type: 'text', text: '' };
   }
-  switch (item.type) {
-    case 1:
-      return { type: 'text', text: (item as { text_item: { text: string } }).text_item.text };
-    case 2: {
-      const url = (item as any).image_item?.media?.full_url;
-      if (!url) {
-        log.warn('parseItem: image missing url, item=%j', item);
-        return { type: 'text', text: '[image]' };
-      }
-      return { type: 'image', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
-    }
-    case 3: {
-      const url = (item as any).voice_item?.media?.full_url;
-      if (!url) {
-        log.warn('parseItem: voice missing url, item=%j', item);
-        return { type: 'text', text: '[audio]' };
-      }
-      return { type: 'audio', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
-    }
-    case 4: {
-      const fileItem = item as any;
-      const url = fileItem.file_item?.media?.full_url;
-      if (!url) {
-        log.warn('parseItem: file missing url, item=%j', item);
-        return { type: 'text', text: '[file]' };
-      }
-      const fileName = fileItem.file_item?.file_name;
-      return fileName
-        ? { type: 'file', name: fileName, source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } }
-        : { type: 'file', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
-    }
-    case 5: {
-      const url = (item as any).video_item?.media?.full_url;
-      if (!url) {
-        log.warn('parseItem: video missing url, item=%j', item);
-        return { type: 'text', text: '[video]' };
-      }
-      return { type: 'video', source: { localUri: '', remoteUrl: url, mimeType: '', sizeBytes: 0 } };
-    }
-    default:
-      return { type: 'text', text: '[unsupported]' };
-  }
+  return { type: 'text', text: (item as { text_item: { text: string } }).text_item.text };
 }
 
 export function toStandardMessage(msg: WeixinMessage): Message {
@@ -237,6 +198,88 @@ export function toStandardMessage(msg: WeixinMessage): Message {
     content: parseItem(msg.item_list[0]),
     direction: 'incoming',
   };
+}
+
+// --------------------------------------------------------------------------
+// Inbound media: download → decrypt → detect → save temp
+// --------------------------------------------------------------------------
+
+const TYPE_LABEL: Record<number, string> = {
+  2: '图片',
+  3: '语音',
+  4: '文件',
+  5: '视频',
+};
+
+export async function processInboundMedia(item: WeixinMessageItem): Promise<MessageContent> {
+  if (item.type === 1) {
+    return { type: 'text', text: '' };
+  }
+
+  let url: string | undefined;
+  let aesKey: string | undefined;
+  let fileNameHint: string | undefined;
+
+  const raw = item as any;
+  switch (item.type) {
+    case 2:
+      url = raw.image_item?.media?.full_url;
+      aesKey = raw.image_item?.media?.aes_key;
+      break;
+    case 3:
+      url = raw.voice_item?.media?.full_url;
+      aesKey = raw.voice_item?.media?.aes_key;
+      break;
+    case 4:
+      url = raw.file_item?.media?.full_url;
+      aesKey = raw.file_item?.media?.aes_key;
+      fileNameHint = raw.file_item?.file_name;
+      break;
+    case 5:
+      url = raw.video_item?.media?.full_url;
+      aesKey = raw.video_item?.media?.aes_key;
+      break;
+    default:
+      throw new Error(`未知媒体类型: ${item.type}`);
+  }
+
+  const label = TYPE_LABEL[item.type] ?? '媒体';
+
+  if (!url) {
+    throw new Error(`${label}接收失败：缺少下载地址`);
+  }
+
+  try {
+    const encrypted = await downloadToBuffer(url);
+    const decrypted = aesKey
+      ? decryptBuffer(encrypted, aesKey)
+      : encrypted;
+    const meta = await saveTemp(decrypted, url, fileNameHint);
+    if (!meta.mimeType) {
+      throw new Error(`${label}接收失败：无法识别文件类型`);
+    }
+
+    const source = {
+      localUri: meta.localUri,
+      sha256: meta.sha256,
+      sizeBytes: meta.sizeBytes,
+      mimeType: meta.mimeType,
+      requireOrganized: true,
+      remoteUrl: url,
+    };
+
+    if (item.type === 4) {
+      return fileNameHint
+        ? { type: 'file', name: fileNameHint, source }
+        : { type: 'file', source };
+    }
+
+    const contentType = item.type === 2 ? 'image' : item.type === 3 ? 'audio' : 'video';
+    return { type: contentType, source };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`${label}接收失败：${reason}`);
+  }
 }
 
 // --------------------------------------------------------------------------

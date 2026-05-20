@@ -32,4 +32,6 @@ export interface Message {
   senderId: UserId;
   content: MessageContent;
   direction: 'incoming' | 'outgoing';
+  /** True when PlatformClient replaced an unavailable media message with a fallback text. */
+  fallback?: boolean;
 }

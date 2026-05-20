@@ -2,11 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bridge } from './index.js';
 import { channelId, messageId, userId, type ChannelId, type Message } from '../core/types.js';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
-import { fetchToTemp } from '../core/fs-utils.js';
-
-vi.mock('../core/fs-utils.js', () => ({
-  fetchToTemp: vi.fn(),
-}));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,7 +86,6 @@ describe('Bridge', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(fetchToTemp).mockReset();
     cloudMessagesIter = new ManualIter<Message>();
     cloudSend.mockResolvedValue(messageId('mid-1'));
     cloudClose.mockResolvedValue(undefined);
@@ -194,9 +188,7 @@ describe('Bridge', () => {
     expect(sessionRequestCommand).not.toHaveBeenCalled();
   });
 
-  it('inbound image downloads to temp and carries localUri + requireOrganized', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345, mimeType: 'image/png' });
-
+  it('inbound image with localUri is buffered and merged with text', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
@@ -210,7 +202,7 @@ describe('Bridge', () => {
       id: messageId('msg-1'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
+      content: { type: 'image', source: { localUri: '/tmp/xabot_img.png', remoteUrl: 'https://example.com/img.png', sha256: 'deadbeef0000', sizeBytes: 12345, mimeType: 'image/png', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.push(msg(chatA, 'describe this'));
@@ -218,7 +210,6 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    expect(vi.mocked(fetchToTemp)).toHaveBeenCalledWith('https://example.com/img.png');
     const invokeCall = sessionRequestCommand.mock.calls.find(
       (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
     );
@@ -233,9 +224,7 @@ describe('Bridge', () => {
     expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
   });
 
-  it('inbound file downloads to temp and carries localUri + requireOrganized', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_doc.pdf', sha256: 'cafebabe1111', sizeBytes: 67890, mimeType: 'image/png' });
-
+  it('inbound file with localUri is buffered and merged with text', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
@@ -249,7 +238,7 @@ describe('Bridge', () => {
       id: messageId('msg-1'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'file', source: { localUri: '', remoteUrl: 'https://example.com/doc.pdf', mimeType: '', sizeBytes: 0 } },
+      content: { type: 'file', source: { localUri: '/tmp/xabot_doc.pdf', remoteUrl: 'https://example.com/doc.pdf', sha256: 'cafebabe1111', sizeBytes: 67890, mimeType: 'application/pdf', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.push(msg(chatA, 'summarize'));
@@ -257,7 +246,6 @@ describe('Bridge', () => {
 
     await bridge.run();
 
-    expect(vi.mocked(fetchToTemp)).toHaveBeenCalledWith('https://example.com/doc.pdf');
     const invokeCall = sessionRequestCommand.mock.calls.find(
       (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
     );
@@ -272,9 +260,7 @@ describe('Bridge', () => {
     expect(messages[1]).toEqual({ type: 'text', text: 'summarize' });
   });
 
-  it('inbound image fetch failure falls back to text placeholder', async () => {
-    vi.mocked(fetchToTemp).mockRejectedValue(new Error('network down'));
-
+  it('fallback text is buffered and merged with text invoke', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
@@ -288,10 +274,11 @@ describe('Bridge', () => {
       id: messageId('msg-1'),
       chatId: chatA,
       senderId: userId('u1'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
+      content: { type: 'text', text: '[图片接收失败：network down]' },
       direction: 'incoming',
-    });
-    cloudMessagesIter.push(msg(chatA, 'describe this'));
+      fallback: true,
+    } as any);
+    cloudMessagesIter.push(msg(chatA, 'try another'));
     cloudMessagesIter.stop();
 
     await bridge.run();
@@ -301,8 +288,9 @@ describe('Bridge', () => {
     );
     expect(invokeCall).toBeTruthy();
     const messages = (invokeCall![0] as any).invoke_activity.messages;
-    expect(messages[0]).toEqual({ type: 'text', text: '[image]' });
-    expect(messages[1]).toEqual({ type: 'text', text: 'describe this' });
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toEqual({ type: 'text', text: '[图片接收失败：network down]' });
+    expect(messages[1]).toEqual({ type: 'text', text: 'try another' });
   });
 
   it('last_activity returns activity_ready → no new_activity', async () => {

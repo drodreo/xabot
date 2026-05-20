@@ -12,8 +12,11 @@ import type { FileRef } from 'xacpp';
 import { StreamCapability, channelId, messageId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
-import { uploadImage, uploadFile } from './upload.js';
+import { uploadImage, uploadFile, downloadMessageResource } from './upload.js';
+import { saveTemp } from '../../core/fs-utils.js';
 import { createLogger } from '../../core/logger.js';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 const log = createLogger('FeishuClient');
 
 export type LogLevel = 'info' | 'debug' | 'trace';
@@ -185,7 +188,42 @@ export class FeishuClient implements PlatformClient {
               return { done: true, value: undefined };
             }
 
-            return { done: false, value: toStandardMessage(event) };
+            const msg = toStandardMessage(event);
+            const content = msg.content;
+            if (content.type !== 'text' && content.source && !content.source.localUri) {
+              if (content.source.remoteUrl) {
+                const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${content.source.remoteUrl.replace(/\W/g, '_').slice(0, 40)}`;
+                try {
+                  const resourceType = content.type === 'image' ? 'image' : 'file';
+                  await downloadMessageResource(this.httpClient, msg.id as string, content.source.remoteUrl, resourceType, tmpPath);
+                  const fileNameHint = content.type === 'file' ? content.name : undefined;
+                  const meta = await saveTemp(tmpPath, fileNameHint);
+                  if (!meta.mimeType) {
+                    throw new Error(`${content.type}接收失败：无法识别文件类型`);
+                  }
+                  const enrichedSource = {
+                    ...content.source,
+                    localUri: meta.localUri,
+                    sha256: meta.sha256,
+                    sizeBytes: meta.sizeBytes,
+                    mimeType: meta.mimeType,
+                    requireOrganized: true,
+                  };
+                  msg.content = { ...content, source: enrichedSource };
+                } catch (err) {
+                  const reason = err instanceof Error ? err.message : String(err);
+                  log.warn('download media failed: %s', reason);
+                  msg.content = { type: 'text', text: `[${content.type}接收失败：${reason}]` };
+                  msg.fallback = true;
+                }
+              } else {
+                log.warn('media has no remoteUrl: type=%s', content.type);
+                msg.content = { type: 'text', text: `[${content.type}接收失败：缺少下载地址]` };
+                msg.fallback = true;
+              }
+            }
+
+            return { done: false, value: msg };
           },
         };
       },

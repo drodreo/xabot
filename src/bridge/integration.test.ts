@@ -19,11 +19,7 @@ import {
   type Message,
 } from '../core/types.js';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
-import { fetchToTemp } from '../core/fs-utils.js';
 
-vi.mock('../core/fs-utils.js', () => ({
-  fetchToTemp: vi.fn(),
-}));
 
 // ─── ManualIter ───────────────────────────────────────────────────────────────
 
@@ -91,7 +87,6 @@ describe('Bridge integration', () => {
   let transportDisconnectMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    vi.mocked(fetchToTemp).mockReset();
     cloudMessagesIter = new ManualIter<Message>();
     cloudSendMock = vi.fn().mockResolvedValue(messageId('mid-1'));
     cloudCloseMock = vi.fn().mockResolvedValue(undefined);
@@ -158,7 +153,6 @@ describe('Bridge integration', () => {
   });
 
   it('L1: cloud image message → image ContentPart', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345, mimeType: 'image/png' });
     const chatA = channelId('chat-a');
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
@@ -169,7 +163,7 @@ describe('Bridge integration', () => {
       id: messageId('msg-img'),
       chatId: chatA,
       senderId: userId('u-sender'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: '', sizeBytes: 0 } },
+      content: { type: 'image', source: { localUri: '/tmp/xabot_img.png', remoteUrl: 'https://example.com/img.png', sha256: 'deadbeef0000', sizeBytes: 12345, mimeType: 'image/png', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.push(makeMessage(chatA, 'describe this'));
@@ -501,7 +495,6 @@ describe('Bridge integration', () => {
   // ── Media buffering ─────────────────────────────────────────────────────
 
   it('image message buffers, text merge invokes with media first', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_photo.png', sha256: 'beefcafe2222', sizeBytes: 54321, mimeType: 'image/png' });
     const chatA = channelId('chat-a');
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
@@ -512,7 +505,7 @@ describe('Bridge integration', () => {
       id: messageId('msg-img'),
       chatId: chatA,
       senderId: userId('u-sender'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/photo.png', mimeType: 'image/png', sizeBytes: 100 } },
+      content: { type: 'image', source: { localUri: '/tmp/xabot_photo.png', remoteUrl: 'https://example.com/photo.png', sha256: 'beefcafe2222', sizeBytes: 54321, mimeType: 'image/png', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.push(makeMessage(chatA, 'describe this'));
@@ -535,10 +528,6 @@ describe('Bridge integration', () => {
   });
 
   it('multiple files buffer then merge on text', async () => {
-    vi.mocked(fetchToTemp).mockImplementation((url: string) => {
-      const name = url.split('/').pop()!;
-      return Promise.resolve({ localUri: `/tmp/xabot_${name}`, sha256: `hash_${name}`, sizeBytes: name.length * 100, mimeType: 'application/octet-stream' });
-    });
     const chatA = channelId('chat-a');
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
@@ -550,7 +539,7 @@ describe('Bridge integration', () => {
         id: messageId(`msg-f${i}`),
         chatId: chatA,
         senderId: userId('u-sender'),
-        content: { type: 'file', source: { localUri: '', remoteUrl: `https://example.com/doc${i}.pdf`, mimeType: 'application/pdf', sizeBytes: 100 } },
+        content: { type: 'file', source: { localUri: `/tmp/xabot_doc${i}.pdf`, remoteUrl: `https://example.com/doc${i}.pdf`, sha256: `hash_doc${i}.pdf`, sizeBytes: 800, mimeType: 'application/pdf', requireOrganized: true } },
         direction: 'incoming',
       });
     }
@@ -584,7 +573,6 @@ describe('Bridge integration', () => {
   });
 
   it('media buffering is isolated by sender', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_a.png', sha256: 'hash_a', sizeBytes: 100, mimeType: 'image/png' });
     const chatA = channelId('chat-a');
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
@@ -595,7 +583,7 @@ describe('Bridge integration', () => {
       id: messageId('msg-sender-a'),
       chatId: chatA,
       senderId: userId('sender-a'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/a.png', mimeType: 'image/png', sizeBytes: 100 } },
+      content: { type: 'image', source: { localUri: '/tmp/xabot_a.png', remoteUrl: 'https://example.com/a.png', sha256: 'hash_a', sizeBytes: 100, mimeType: 'image/png', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.push({
@@ -619,7 +607,6 @@ describe('Bridge integration', () => {
   });
 
   it('media-only messages never invoke', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_only.png', sha256: 'hash_only', sizeBytes: 200, mimeType: 'image/png' });
     const chatA = channelId('chat-a');
     sessionRequestCommand.mockResolvedValue({ kind: 'acknowledge' });
 
@@ -627,7 +614,7 @@ describe('Bridge integration', () => {
       id: messageId('msg-only-img'),
       chatId: chatA,
       senderId: userId('u-sender'),
-      content: { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/photo.png', mimeType: 'image/png', sizeBytes: 100 } },
+      content: { type: 'image', source: { localUri: '/tmp/xabot_only.png', remoteUrl: 'https://example.com/photo.png', sha256: 'hash_only', sizeBytes: 200, mimeType: 'image/png', requireOrganized: true } },
       direction: 'incoming',
     });
     cloudMessagesIter.stop();

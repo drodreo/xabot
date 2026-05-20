@@ -101,7 +101,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         } else {
           const src = part.source;
           const location = src.localUri || src.remoteUrl;
-          log.info('invoke_activity [act-%s][> IN]: [%s: %s]', this.activityId ?? 'none', part.type, location);
+          log.info('invoke_activity [act-%s][> IN]: [%s: %s] mime=%s', this.activityId ?? 'none', part.type, location, src.mimeType || 'unknown');
         }
       }
       return { kind: 'acknowledge' };

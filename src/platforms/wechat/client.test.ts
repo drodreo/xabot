@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WechatClient, type WechatConfig } from './client.js';
 import { StreamCapability, channelId } from '../../core/types.js';
+import { processInboundMedia } from './message.js';
+
+vi.mock('./message.js', async (importOriginal) => {
+  const mod = await importOriginal() as any;
+  return {
+    ...mod,
+    processInboundMedia: vi.fn(),
+  };
+});
 
 // --------------------------------------------------------------------------
 // Mock fetch
@@ -36,6 +45,7 @@ describe('WechatClient', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFetch.mockReset();
+    vi.mocked(processInboundMedia).mockReset();
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -230,6 +240,95 @@ describe('WechatClient', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect((client as any).connected).toBe(false);
+    });
+
+    it('processes inbound media via processInboundMedia and yields Message with localUri', async () => {
+      vi.mocked(processInboundMedia).mockResolvedValue({
+        type: 'image',
+        source: { localUri: '/tmp/img.png', sha256: 'abc', sizeBytes: 10, mimeType: 'image/png', requireOrganized: true, remoteUrl: 'https://cdn.com/img.png' },
+      });
+
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [{ type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png', aes_key: 'key' } } }],
+            msg_id: 'msg_img',
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const result = await iter.next();
+
+      expect(result.done).toBe(false);
+      expect(result.value.content.type).toBe('image');
+      expect(result.value.content.source.localUri).toBe('/tmp/img.png');
+      expect(result.value.content.source.mimeType).toBe('image/png');
+      await client.close();
+    });
+
+    it('yields fallback text with fallback=true when processInboundMedia throws', async () => {
+      vi.mocked(processInboundMedia).mockRejectedValue(new Error('图片接收失败：network down'));
+
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [{ type: 2, image_item: { media: { full_url: 'https://cdn.com/img.png' } } }],
+            msg_id: 'msg_img',
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+
+      const iter = client.messages()[Symbol.asyncIterator]();
+      const result = await iter.next();
+
+      expect(result.done).toBe(false);
+      expect(result.value.content).toEqual({ type: 'text', text: '[图片接收失败：network down]' });
+      expect(result.value.fallback).toBe(true);
+      await client.close();
+    });
+
+    it('skips message when item_list is empty', async () => {
+      mockFetch
+        .mockResolvedValueOnce(makeJsonResponse({
+          ret: 0,
+          get_updates_buf: 'buf2',
+          msgs: [{
+            from_user_id: 'user_alice',
+            to_user_id: 'bot_123',
+            message_type: 1,
+            context_token: 'ctx_1',
+            item_list: [],
+            msg_id: 'msg_empty',
+          }],
+        }))
+        .mockImplementationOnce(hangingPoll);
+
+      const client = new WechatClient(makeConfig());
+      await client.connect();
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Empty item_list should be skipped — no crash, no yield
+      expect((client as any).messageBuffer).toHaveLength(0);
+      await client.close();
     });
   });
 

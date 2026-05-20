@@ -61,20 +61,23 @@ export async function uploadFile(
   return { key: result.file_key, name };
 }
 
-/** Download file from Feishu by file_key to destPath. */
-export async function downloadFile(
+/** Download a resource file from a received message via im/v1/message-resource/get. */
+export async function downloadMessageResource(
   client: FeishuSdkClient,
+  messageId: string,
   fileKey: string,
+  type: 'image' | 'file',
   destPath: string,
 ): Promise<void> {
-  const result = await client.im.file.get({
-    path: { file_key: fileKey },
+  const result = await client.im.messageResource.get({
+    params: { type },
+    path: { message_id: messageId, file_key: fileKey },
   });
 
   await mkdir(dirname(destPath), { recursive: true });
   await result.writeFile(destPath);
 
-  log.debug('download file: %s → %s', fileKey, destPath);
+  log.debug('download message resource: %s/%s (%s) → %s', messageId, fileKey, type, destPath);
 }
 
 

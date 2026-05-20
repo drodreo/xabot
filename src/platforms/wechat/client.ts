@@ -1,8 +1,8 @@
 import type { PlatformClient } from '../../core/client.js';
 import type { ChannelId, MessageId, UserId, Message, MessageContent } from '../../core/types.js';
-import { StreamCapability, messageId } from '../../core/types.js';
+import { StreamCapability, messageId, channelId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
-import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, type WeixinMessage } from './message.js';
+import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, processInboundMedia, type WeixinMessage } from './message.js';
 import { uploadMedia } from './upload.js';
 import { randomBytes } from 'node:crypto';
 import { createLogger } from '../../core/logger.js';
@@ -140,7 +140,28 @@ export class WechatClient implements PlatformClient {
         for (const msg of data.msgs ?? []) {
           if (msg.message_type !== 1) continue;
           this.contextTokenStore.set(msg.from_user_id, msg.context_token);
-          const standardMsg = toStandardMessage(msg);
+
+          let standardMsg: Message;
+          const item = msg.item_list[0];
+          if (!item) continue;
+          if (item.type === 1) {
+            standardMsg = toStandardMessage(msg);
+          } else {
+            let content: MessageContent;
+            let fallback = false;
+            try {
+              content = await processInboundMedia(item);
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              log.warn('inbound media failed: %s', reason);
+              content = { type: 'text', text: `[${reason}]` };
+              fallback = true;
+            }
+            standardMsg = toStandardMessage(msg);
+            standardMsg.content = content;
+            standardMsg.fallback = fallback;
+          }
+
           if (this.messageResolve) {
             const resolve = this.messageResolve;
             this.messageResolve = null;

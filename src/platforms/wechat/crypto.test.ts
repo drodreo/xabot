@@ -5,8 +5,7 @@ import {
   generateAesKey,
   encodeAesKeyForMedia,
   encodeAesKeyForFile,
-  decodeAesKeyForMedia,
-  decodeAesKeyForFile,
+  parseAesKey,
 } from './crypto.js';
 
 describe('AES ECB round-trip', () => {
@@ -61,20 +60,6 @@ describe('AES ECB round-trip', () => {
 });
 
 describe('AES key encoding', () => {
-  it('media encode/decode round-trip', () => {
-    const key = generateAesKey();
-    const encoded = encodeAesKeyForMedia(key);
-    const decoded = decodeAesKeyForMedia(encoded);
-    expect(decoded.toString('hex')).toBe(key.toString('hex'));
-  });
-
-  it('file encode/decode round-trip', () => {
-    const key = generateAesKey();
-    const encoded = encodeAesKeyForFile(key);
-    const decoded = decodeAesKeyForFile(encoded);
-    expect(decoded.toString('hex')).toBe(key.toString('hex'));
-  });
-
   it('media and file encodings are different', () => {
     const key = generateAesKey();
     const mediaEnc = encodeAesKeyForMedia(key);
@@ -85,5 +70,37 @@ describe('AES key encoding', () => {
   it('generateAesKey returns 16 bytes', () => {
     const key = generateAesKey();
     expect(key.length).toBe(16);
+  });
+});
+
+describe('parseAesKey', () => {
+  it('base64(raw 16 bytes) → returns 16 bytes directly', () => {
+    const key = generateAesKey();
+    const encoded = key.toString('base64');
+    const parsed = parseAesKey(encoded);
+    expect(parsed.toString('hex')).toBe(key.toString('hex'));
+  });
+
+  it('base64(hex string 32 chars) → hex decode to 16 bytes', () => {
+    const key = generateAesKey();
+    const hex = key.toString('hex');
+    const encoded = Buffer.from(hex).toString('base64');
+    const parsed = parseAesKey(encoded);
+    expect(parsed.toString('hex')).toBe(key.toString('hex'));
+  });
+
+  it('non-16 non-32 bytes → throws', () => {
+    const encoded = Buffer.from('short').toString('base64');
+    expect(() => parseAesKey(encoded)).toThrow('Invalid AES key');
+  });
+
+  it('consistency with encode/decode round-trip', () => {
+    const key = generateAesKey();
+    // media encoding: base64(hex_string)
+    const mediaEnc = encodeAesKeyForMedia(key);
+    expect(parseAesKey(mediaEnc).toString('hex')).toBe(key.toString('hex'));
+    // file encoding: base64(raw)
+    const fileEnc = encodeAesKeyForFile(key);
+    expect(parseAesKey(fileEnc).toString('hex')).toBe(key.toString('hex'));
   });
 });

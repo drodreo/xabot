@@ -5,7 +5,6 @@ import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, Xa
 import { parseInput } from './input-parser.js';
 import { createLogger } from '../core/logger.js';
 const log = createLogger('Bridge');
-import { fetchToTemp } from '../core/fs-utils.js';
 import type { MessageId } from '../core/types.js';
 
 interface PendingItem {
@@ -581,6 +580,18 @@ export class Bridge {
         const { chatId, senderId } = msg;
 
         // ── Text messages: parse and dispatch by kind ─────────────────────
+        if (msg.content.type === 'text' && msg.fallback) {
+          const mediaKey = this.targetKey(chatId, senderId);
+          let buffered = this.pendingMediaByTarget.get(mediaKey);
+          if (!buffered) {
+            buffered = [];
+            this.pendingMediaByTarget.set(mediaKey, buffered);
+          }
+          buffered.push({ ...msg.content });
+          log.debug('← cloud recv: fallback (chatId=%s, buffered=%d)', chatId, buffered.length);
+          continue;
+        }
+
         if (msg.content.type === 'text') {
           const parsed = parseInput(msg.content.text);
           switch (parsed.kind) {
@@ -706,22 +717,8 @@ export class Bridge {
           }
         }
 
-        // ── Non-text messages: download + buffer for next text invoke ────────
-        let part: ContentPart;
-        const src = msg.content.source;
-        if (src.localUri) {
-          part = { ...msg.content } as ContentPart;
-        } else if (src.remoteUrl) {
-          try {
-            const fetched = await fetchToTemp(src.remoteUrl);
-            part = { ...msg.content, source: { ...src, localUri: fetched.localUri, sha256: fetched.sha256, sizeBytes: fetched.sizeBytes, mimeType: fetched.mimeType, requireOrganized: true } } as ContentPart;
-          } catch (err) {
-            log.warn('fetchToTemp failed for inbound %s: %s', msg.content.type, err);
-            part = { type: 'text', text: `[${msg.content.type}]` };
-          }
-        } else {
-          part = { type: 'text', text: `[${msg.content.type}]` };
-        }
+        // ── Non-text messages: PlatformClient already resolved localUri ─────
+        const part = { ...msg.content } as ContentPart;
 
         const mediaKey = this.targetKey(chatId, senderId);
         let buffered = this.pendingMediaByTarget.get(mediaKey);
