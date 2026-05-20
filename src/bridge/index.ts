@@ -714,7 +714,7 @@ export class Bridge {
         } else if (src.remoteUrl) {
           try {
             const fetched = await fetchToTemp(src.remoteUrl);
-            part = { ...msg.content, source: { ...src, localUri: fetched.localUri, sha256: fetched.sha256, sizeBytes: fetched.sizeBytes, requireOrganized: true } } as ContentPart;
+            part = { ...msg.content, source: { ...src, localUri: fetched.localUri, sha256: fetched.sha256, sizeBytes: fetched.sizeBytes, mimeType: fetched.mimeType, requireOrganized: true } } as ContentPart;
           } catch (err) {
             log.warn('fetchToTemp failed for inbound %s: %s', msg.content.type, err);
             part = { type: 'text', text: `[${msg.content.type}]` };

@@ -9,6 +9,7 @@ export interface FetchResult {
   localUri: string;
   sha256: string;
   sizeBytes: number;
+  mimeType: string;
 }
 
 /** Download remote URL to a temp file, return temp path with hash and size. */
@@ -17,6 +18,9 @@ export async function fetchToTemp(remoteUrl: string): Promise<FetchResult> {
   if (!res.ok) {
     throw new Error(`Fetch failed: HTTP ${res.status}`);
   }
+  const rawContentType = res.headers.get('content-type') ?? '';
+  const mimeType = (rawContentType.split(';')[0] ?? '').trim();
+
   const buf = Buffer.from(await res.arrayBuffer());
   const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${basename(new URL(remoteUrl).pathname || 'blob')}`;
   await writeFile(tmpPath, buf);
@@ -24,7 +28,7 @@ export async function fetchToTemp(remoteUrl: string): Promise<FetchResult> {
 
   log.debug('fetchToTemp: %s → %s (%d bytes, sha256=%s)', remoteUrl.slice(0, 60), tmpPath, buf.length, hash.slice(0, 12));
 
-  return { localUri: tmpPath, sha256: hash, sizeBytes: buf.length };
+  return { localUri: tmpPath, sha256: hash, sizeBytes: buf.length, mimeType };
 }
 
 /** Safe unlink — ignore ENOENT. */

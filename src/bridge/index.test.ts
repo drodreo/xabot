@@ -195,7 +195,7 @@ describe('Bridge', () => {
   });
 
   it('inbound image downloads to temp and carries localUri + requireOrganized', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345 });
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_img.png', sha256: 'deadbeef0000', sizeBytes: 12345, mimeType: 'image/png' });
 
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
@@ -234,7 +234,7 @@ describe('Bridge', () => {
   });
 
   it('inbound file downloads to temp and carries localUri + requireOrganized', async () => {
-    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_doc.pdf', sha256: 'cafebabe1111', sizeBytes: 67890 });
+    vi.mocked(fetchToTemp).mockResolvedValue({ localUri: '/tmp/xabot_doc.pdf', sha256: 'cafebabe1111', sizeBytes: 67890, mimeType: 'image/png' });
 
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand));
