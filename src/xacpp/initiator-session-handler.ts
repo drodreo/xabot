@@ -197,6 +197,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         actionId: crypto.randomUUID(),
         description: parsed.description,
         alert: 'info',
+        intent: parsed.description,
       });
       if (response.kind === 'action') {
         log.info('action_response [act-%s] req=%s result=%s%s', this.activityId, response.requestId, response.type,

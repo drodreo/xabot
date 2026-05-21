@@ -133,7 +133,7 @@ export class Bridge {
   private formatActionMessage(payload: ActionRequestEvent): string {
     const alertLabel = payload.alert === 'critical' ? '🔴' : payload.alert === 'warn' ? '🟡' : 'ℹ️';
     return [
-      `${alertLabel} [Authorization Request] ${payload.description}`,
+      `${alertLabel} [Authorization Request] ${payload.intent || payload.description}`,
       `Tool: ${payload.toolName}`,
       payload.arguments ? `Arguments: ${payload.arguments}` : '',
       '───────────────',
