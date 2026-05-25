@@ -57,7 +57,10 @@ export interface FeishuMessageBody {
 function contentToFeishuBody(content: MessageContent): string {
   switch (content.type) {
     case 'text':
-      return JSON.stringify({ text: content.text });
+      return JSON.stringify({
+        schema: '2.0',
+        body: { elements: [{ tag: 'markdown', content: content.text }] },
+      });
     case 'image':
       return JSON.stringify({ image_key: content.source.remoteUrl });
     case 'audio':
@@ -82,7 +85,7 @@ export function fromMessageContent(
 ): FeishuMessageBody {
   let msg_type: string;
   switch (content.type) {
-    case 'text': msg_type = 'text'; break;
+    case 'text': msg_type = 'interactive'; break;
     case 'image': msg_type = 'image'; break;
     case 'audio':
       // Feishu audio msg_type only accepts opus; non-opus is sent as file

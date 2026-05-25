@@ -106,8 +106,8 @@ describe('FeishuClient', () => {
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
-          msg_type: 'text',
-          content: JSON.stringify({ text: 'hello' }),
+          msg_type: 'interactive',
+          content: JSON.stringify({ schema: '2.0', body: { elements: [{ tag: 'markdown', content: 'hello' }] } }),
         },
         params: { receive_id_type: 'chat_id' },
       });
@@ -126,8 +126,8 @@ describe('FeishuClient', () => {
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
-          msg_type: 'text',
-          content: JSON.stringify({ text: '[image 无法发送]' }),
+          msg_type: 'interactive',
+          content: JSON.stringify({ schema: '2.0', body: { elements: [{ tag: 'markdown', content: '[image 无法发送]' }] } }),
         },
         params: { receive_id_type: 'chat_id' },
       });
@@ -148,8 +148,8 @@ describe('FeishuClient', () => {
       expect(mockState.httpMessageCreate).toHaveBeenCalledWith({
         data: {
           receive_id: 'oc_chat1',
-          msg_type: 'text',
-          content: JSON.stringify({ text: '[file 无法发送]' }),
+          msg_type: 'interactive',
+          content: JSON.stringify({ schema: '2.0', body: { elements: [{ tag: 'markdown', content: '[file 无法发送]' }] } }),
         },
         params: { receive_id_type: 'chat_id' },
       });

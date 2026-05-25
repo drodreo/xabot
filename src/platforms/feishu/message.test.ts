@@ -160,12 +160,15 @@ describe('toStandardMessage', () => {
 });
 
 describe('fromMessageContent', () => {
-  it('builds a text message body', () => {
+  it('builds an interactive card message body for text content', () => {
     const body = fromMessageContent('oc_chat1', { type: 'text', text: 'hello' });
 
     expect(body.receive_id).toBe('oc_chat1');
-    expect(body.msg_type).toBe('text');
-    expect(body.content).toBe(JSON.stringify({ text: 'hello' }));
+    expect(body.msg_type).toBe('interactive');
+    expect(body.content).toBe(JSON.stringify({
+      schema: '2.0',
+      body: { elements: [{ tag: 'markdown', content: 'hello' }] },
+    }));
   });
 
   it('builds an image message body', () => {
