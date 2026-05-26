@@ -112,6 +112,9 @@ describe('Bridge', () => {
           beginProcessing: vi.fn().mockResolvedValue(undefined),
           endProcessing: vi.fn().mockResolvedValue(undefined),
           close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          setTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
         } as never,
       },
     );
@@ -580,17 +583,36 @@ describe('Bridge', () => {
 
   it('handleEvent content_part forwards to cloud regardless of stream capability', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test content_part forwarding
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn().mockReturnValue(false),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     // Mock NonStreaming capability — content_part should still be forwarded
-    (bridge as any).cloud = {
-      ...((bridge as any).cloud),
+    (verboseBridge as any).cloud = {
+      ...((verboseBridge as any).cloud),
       streamCapability: () => StreamCapability.NonStreaming,
     };
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'content_part',
@@ -605,11 +627,31 @@ describe('Bridge', () => {
 
   it('handleEvent complete returns acknowledge without sending (content_part already forwarded)', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to ensure content_part forwarding behavior
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -618,7 +660,8 @@ describe('Bridge', () => {
     });
 
     expect(response).toEqual({ kind: 'acknowledge' });
-    expect(cloudSend).not.toHaveBeenCalled();
+    // complete always sends assistantReply via _sendContentPart
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Final answer' });
   });
 
   it('handleEvent notify sends message to cloud via sessionChatId', async () => {
@@ -698,11 +741,30 @@ describe('Bridge', () => {
   // ── Pending response ────────────────────────────────────────────────────
 
   it('resolvePending resolves a blocked action_request', async () => {
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+    const actionBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    actionBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    actionBridge.markEstablished();
+    (actionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = bridge.handleEvent('act-1', {
+    const eventPromise = actionBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'action_request',
@@ -716,20 +778,39 @@ describe('Bridge', () => {
     });
 
     // cloudSend called with the action request notification
-    expect(cloudSend).toHaveBeenCalled();
+    await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
-    bridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'approve' });
+    actionBridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'approve' });
 
     const response = await eventPromise;
     expect(response).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
   });
 
   it('resolvePending resolves a blocked question', async () => {
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+    const questionBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    questionBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    questionBridge.markEstablished();
+    (questionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = bridge.handleEvent('act-1', {
+    const eventPromise = questionBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'question',
@@ -739,7 +820,9 @@ describe('Bridge', () => {
       },
     });
 
-    bridge.resolvePending('req-q1', { kind: 'question', requestId: 'req-q1', type: 'answer', content: 'Alice' });
+    await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
+
+    questionBridge.resolvePending('req-q1', { kind: 'question', requestId: 'req-q1', type: 'answer', content: 'Alice' });
 
     const response = await eventPromise;
     expect(response).toEqual({ kind: 'question', requestId: 'req-q1', type: 'answer', content: 'Alice' });
@@ -748,11 +831,30 @@ describe('Bridge', () => {
   // ── close() rejects pending ─────────────────────────────────────────────
 
   it('close() rejects pending responses', async () => {
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
+    const closeBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    closeBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    closeBridge.markEstablished();
+    (closeBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = bridge.handleEvent('act-1', {
+    const eventPromise = closeBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'action_request',
@@ -765,7 +867,9 @@ describe('Bridge', () => {
       },
     });
 
-    await bridge.close();
+    await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
+
+    await closeBridge.close();
 
     const response = await eventPromise;
     expect(response.kind).toBe('error');
@@ -830,11 +934,30 @@ describe('Bridge', () => {
 
   it('handleEvent complete with image returns acknowledge without sending', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to ensure content_part forwarding behavior
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -846,7 +969,9 @@ describe('Bridge', () => {
     });
 
     expect(response).toEqual({ kind: 'acknowledge' });
-    expect(cloudSend).not.toHaveBeenCalled();
+    // complete always sends assistantReply via _sendContentPart
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Here is the image:' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } });
   });
 
   // ── Problem 5: cloud.send failure cleans up pending ─────────────────────
@@ -937,8 +1062,29 @@ describe('Bridge', () => {
 
   it('E2E: cloud msg → invoke → content_part forwarded, complete returns acknowledge', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
+    // Create bridge with verbose:true to test content_part forwarding
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          setTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
 
     sessionRequestCommand
       .mockResolvedValueOnce({ kind: 'activity_not_found' })
@@ -947,10 +1093,10 @@ describe('Bridge', () => {
 
     cloudMessagesIter.push(msg(chatA, 'ping'));
     cloudMessagesIter.stop();
-    await bridge.run();
+    await verboseBridge.run();
 
     // Agent sends content_part — should be forwarded
-    await bridge.handleEvent('act-e2e2', {
+    await verboseBridge.handleEvent('act-e2e2', {
       activity: 'act-e2e2',
       event: {
         type: 'content_part',
@@ -962,8 +1108,8 @@ describe('Bridge', () => {
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
 
-    // Agent sends complete — should NOT send to cloud
-    const response = await bridge.handleEvent('act-e2e2', {
+    // Agent sends complete — complete always sends assistantReply via _sendContentPart
+    const response = await verboseBridge.handleEvent('act-e2e2', {
       activity: 'act-e2e2',
       event: {
         type: 'complete',
@@ -972,6 +1118,8 @@ describe('Bridge', () => {
     });
 
     expect(response).toEqual({ kind: 'acknowledge' });
+    // Complete sends the assistantReply again
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
   });
 
   it('E2E: same chatId multiple messages → activity reused, events routed to sessionChatId', async () => {
@@ -1105,7 +1253,7 @@ describe('Bridge', () => {
     });
 
     // First call sent message to cloud
-    expect(cloudSend).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(1));
 
     const p2 = bridge.handleEvent('act-1', {
       activity: 'act-1',
@@ -1169,7 +1317,7 @@ describe('Bridge', () => {
     });
 
     // Both sent immediately (different targets)
-    expect(cloudSend).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(2));
 
     bridge.resolvePending('req-a', { kind: 'action', requestId: 'req-a', type: 'approve' });
     bridge.resolvePending('req-b', { kind: 'action', requestId: 'req-b', type: 'reject', reason: 'no' });
@@ -1277,11 +1425,30 @@ describe('Bridge', () => {
 
   it('first think event sends thinking indicator', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test thinking indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'think', requestId: 't1' },
     } as any);
@@ -1292,15 +1459,34 @@ describe('Bridge', () => {
 
   it('consecutive think events do not repeat indicator', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test thinking indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'think', requestId: 't1' },
     } as any);
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'think', requestId: 't2' },
     } as any);
@@ -1311,18 +1497,37 @@ describe('Bridge', () => {
 
   it('think then content_part ends thinking and forwards content', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test thinking indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'think', requestId: 't1' },
     } as any);
 
     cloudSend.mockClear();
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'content_part',
@@ -1340,18 +1545,37 @@ describe('Bridge', () => {
 
   it('think then tool_use ends thinking and starts tool indicator', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test thinking/tool indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'think', requestId: 't1' },
     } as any);
 
     cloudSend.mockClear();
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
     } as any);
@@ -1364,11 +1588,30 @@ describe('Bridge', () => {
 
   it('first tool_use event sends tool indicator', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test tool indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
     } as any);
@@ -1379,15 +1622,34 @@ describe('Bridge', () => {
 
   it('consecutive tool_use events do not repeat indicator', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test tool indicator
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
     } as any);
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'tool_use', requestId: 'tu2', toolName: 'bash', arguments: '{}' },
     } as any);
@@ -1435,14 +1697,33 @@ describe('Bridge', () => {
 
   it('full ReAct cycle: think → tool_use → pair_complete → complete', async () => {
     const chatA = channelId('chat-a');
-    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
-    bridge.markEstablished();
-    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+    // Create bridge with verbose:true to test ReAct cycle indicators
+    const verboseBridge = new Bridge(
+      mockTransport(),
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSend,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudClose,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'think', requestId: 't1' } } as any);
-    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' } } as any);
-    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'pair_complete', round: 'r1', pair: 'p1' } } as any);
-    await bridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] } });
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'think', requestId: 't1' } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'pair_complete', round: 'r1', pair: 'p1' } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] } });
 
     const texts = cloudSend.mock.calls
       .filter((c) => c[1]?.type === 'text')
@@ -1465,15 +1746,15 @@ describe('Bridge', () => {
     cloudMessagesIter.stop();
     await bridge.run();
 
-    expect((bridge as any).cloud.beginProcessing).toHaveBeenCalled();
+    expect((bridge as any).cloud.setTypingIndicator).toHaveBeenCalled();
 
-    (bridge as any).cloud.endProcessing.mockClear();
+    (bridge as any).cloud.releaseTypingIndicator.mockClear();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] },
     });
 
-    expect((bridge as any).cloud.endProcessing).toHaveBeenCalled();
+    expect((bridge as any).cloud.releaseTypingIndicator).toHaveBeenCalled();
   });
 });

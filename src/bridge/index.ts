@@ -62,8 +62,11 @@ export class Bridge {
   /** Reference to the establish handler — Phase 1 feeds discovered challenges to it. */
   private establishHandler: { submitChallenge(challenge: string, chatId: ChannelId): void } | null = null;
 
-  constructor(transport: XacppTransport, options?: { cloud?: PlatformClient }) {
+  private verbose: boolean;
+
+  constructor(transport: XacppTransport, options?: { cloud?: PlatformClient; verbose?: boolean }) {
     this.transport = transport;
+    this.verbose = options?.verbose ?? false;
     if (options?.cloud) {
       this.cloud = options.cloud;
       this.cloudReady = Promise.resolve();
@@ -265,7 +268,7 @@ export class Bridge {
     expressingStart?: number;
   }>();
 
-  private async beginProcessingIfNeeded(chatId: ChannelId, senderId: UserId, activityId: string, messageId: MessageId): Promise<void> {
+  private async setTypingIndicatorIfNeeded(chatId: ChannelId, senderId: UserId, activityId: string, messageId: MessageId): Promise<void> {
     if (!this.cloud) return;
     let state = this.activityStates.get(activityId);
     if (!state) {
@@ -274,32 +277,30 @@ export class Bridge {
     }
     state.processingMessageId = messageId;
     try {
-      await this.cloud.beginProcessing(chatId, senderId, messageId);
+      await this.cloud.setTypingIndicator(chatId, senderId, messageId);
     } catch (err) {
-      log.debug('beginProcessing failed: %s', err);
+      log.debug('setTypingIndicator failed: %s', err);
     }
   }
 
-  private async endProcessingForActivity(chatId: ChannelId, senderId: UserId, activityId: string): Promise<void> {
+  private async releaseTypingIndicatorForActivity(chatId: ChannelId, senderId: UserId, activityId: string): Promise<void> {
     if (!this.cloud) return;
     const state = this.activityStates.get(activityId);
     const msgId = state?.processingMessageId;
     if (msgId === undefined) return;
     delete state!.processingMessageId;
     try {
-      await this.cloud.endProcessing(chatId, senderId, msgId);
+      await this.cloud.releaseTypingIndicator(chatId, senderId, msgId);
     } catch (err) {
-      log.debug('endProcessing failed: %s', err);
+      log.debug('releaseTypingIndicator failed: %s', err);
     }
   }
 
   private async endThinking(_chatId: ChannelId, activityId: string): Promise<void> {
     const state = this.activityStates.get(activityId);
     if (!state?.thinkingStart) return;
-    const start = state.thinkingStart;
+    // Elapsed time available for future use: (Date.now() - state.thinkingStart) / 1000
     delete state.thinkingStart;
-    // Elapsed time kept for future optimization; no longer sent to cloud.
-    void ((Date.now() - start) / 1000).toFixed(1);
   }
 
   /** Send a single ContentPart to the cloud platform. */
@@ -357,6 +358,21 @@ export class Bridge {
       }
     }
 
+    // Handle typing indicator: refresh for non-complete, release for complete
+    if (event.event.type === 'complete') {
+      const state = this.activityStates.get(activityId);
+      if (state?.processingMessageId !== undefined) {
+        await this.cloud.releaseTypingIndicator(chatId, target.senderId, state.processingMessageId);
+        delete state.processingMessageId;
+      }
+    } else {
+      try {
+        await this.cloud.refreshTypingIndicator(chatId, target.senderId);
+      } catch (err) {
+        log.debug('refreshTypingIndicator failed: %s', err);
+      }
+    }
+
     switch (event.event.type) {
       case 'think': {
         if (!chatId) return { kind: 'acknowledge' };
@@ -367,10 +383,12 @@ export class Bridge {
         }
         if (state.thinkingStart === undefined) {
           state.thinkingStart = Date.now();
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: '💭 正在思考...' });
-          } catch (err) {
-            log.debug('think indicator send failed: %s', err);
+          if (this.verbose) {
+            try {
+              await this.cloud.send(chatId, { type: 'text', text: '💭 正在思考...' });
+            } catch (err) {
+              log.debug('think indicator send failed: %s', err);
+            }
           }
         }
         return { kind: 'acknowledge' };
@@ -402,14 +420,30 @@ export class Bridge {
 
       case 'content_part': {
         if (!chatId) return { kind: 'acknowledge' };
-        // content_part is emitted in non-streaming mode — always forward to cloud
-        const payload = event.event.payload as ContentPart;
-        await this._sendContentPart(chatId, target.senderId, activityId, payload);
+        // content_part is emitted in non-streaming mode — forward only if verbose
+        if (this.verbose) {
+          const payload = event.event.payload as ContentPart;
+          await this._sendContentPart(chatId, target.senderId, activityId, payload);
+        }
+        return { kind: 'acknowledge' };
+      }
+
+      case 'tool_result': {
+        if (!chatId) return { kind: 'acknowledge' };
+        const payload = event.event;
+        if (payload.toolName === 'send_message') {
+          for (const part of payload.parts) {
+            await this._sendContentPart(chatId, target.senderId, activityId, part);
+          }
+        }
         return { kind: 'acknowledge' };
       }
 
       case 'complete': {
-        await this.endProcessingForActivity(chatId, target.senderId, activityId);
+        const payload = event.event;
+        for (const part of payload.assistantReply) {
+          await this._sendContentPart(chatId, target.senderId, activityId, part);
+        }
         return { kind: 'acknowledge' };
       }
 
@@ -506,23 +540,24 @@ export class Bridge {
         }
         if (state.toolActiveStart === undefined) {
           state.toolActiveStart = Date.now();
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: '🔧 行动中...' });
-          } catch (err) {
-            log.debug('tool_use indicator send failed: %s', err);
+          if (this.verbose) {
+            try {
+              await this.cloud.send(chatId, { type: 'text', text: '🔧 行动中...' });
+            } catch (err) {
+              log.debug('tool_use indicator send failed: %s', err);
+            }
           }
         }
         return { kind: 'acknowledge' };
       }
 
       case 'pair_complete': {
-        if (!chatId) return { kind: 'acknowledge' };
-        const state = this.activityStates.get(activityId);
-        if (state?.toolActiveStart !== undefined) {
-          const start = state.toolActiveStart;
-          delete state.toolActiveStart;
-          // Elapsed time kept for future optimization; no longer sent to cloud.
-          void ((Date.now() - start) / 1000).toFixed(1);
+        if (this.verbose) {
+          const state = this.activityStates.get(activityId);
+          if (state?.toolActiveStart !== undefined) {
+            delete state.toolActiveStart;
+            // Elapsed time available for future use: (Date.now() - start) / 1000
+          }
         }
         return { kind: 'acknowledge' };
       }
@@ -636,7 +671,7 @@ export class Bridge {
                       messages: [{ type: 'text', text: parsed.prompt }],
                     },
                   });
-                  await this.beginProcessingIfNeeded(chatId, senderId, newActivityId, msg.id);
+                  await this.setTypingIndicatorIfNeeded(chatId, senderId, newActivityId, msg.id);
                 }
               }
               continue;
@@ -737,7 +772,7 @@ export class Bridge {
                   messages: [...bufferedMedia, { type: 'text', text: parsed.text }],
                 },
               });
-              await this.beginProcessingIfNeeded(chatId, senderId, activityId, msg.id);
+              await this.setTypingIndicatorIfNeeded(chatId, senderId, activityId, msg.id);
               continue;
             }
           }
@@ -785,7 +820,7 @@ export class Bridge {
       if (state.processingMessageId !== undefined) {
         const target = this.activityToTarget.get(activityId);
         if (target) {
-          await this.cloud?.endProcessing(target.chatId, target.senderId, state.processingMessageId).catch(() => {});
+          await this.cloud?.releaseTypingIndicator(target.chatId, target.senderId, state.processingMessageId).catch(() => {});
         }
       }
     }

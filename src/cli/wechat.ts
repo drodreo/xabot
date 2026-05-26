@@ -30,14 +30,15 @@ export function registerWechat(program: Command): void {
 
   wechat
     .command('run')
+    .option('--verbose', 'Enable verbose mode (show thinking/tool indicators)')
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
-    .action(async () => {
-      const { logLevel } = wechat.opts();
+    .action(async (opts) => {
+      const { logLevel, verbose } = wechat.opts();
       setLevel(logLevel);
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
 
-      const bridge = new Bridge(transport);
+      const bridge = new Bridge(transport, { verbose: verbose ?? false });
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
 

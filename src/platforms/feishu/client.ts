@@ -286,7 +286,7 @@ export class FeishuClient implements PlatformClient {
     await this.fetchTenantToken();
   }
 
-  async beginProcessing(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
+  async setTypingIndicator(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
     if (!messageId) return;
     const result = await this.httpClient.im.messageReaction.create({
       path: { message_id: messageId as string },
@@ -297,7 +297,11 @@ export class FeishuClient implements PlatformClient {
     }
   }
 
-  async endProcessing(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
+  async refreshTypingIndicator(_chatId: ChannelId, _senderId: UserId): Promise<void> {
+    // Feishu does not require refresh — the server maintains reactions automatically
+  }
+
+  async releaseTypingIndicator(_chatId: ChannelId, _senderId: UserId, messageId?: MessageId): Promise<void> {
     if (!messageId) return;
     const reactionId = this.activeReactions.get(messageId as string);
     if (!reactionId) return;

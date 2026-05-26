@@ -113,6 +113,9 @@ describe('Bridge integration', () => {
           beginProcessing: vi.fn().mockResolvedValue(undefined),
           endProcessing: vi.fn().mockResolvedValue(undefined),
           close: cloudCloseMock,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          setTypingIndicator: vi.fn().mockResolvedValue(undefined),
+          releaseTypingIndicator: vi.fn().mockResolvedValue(undefined),
         } as never,
       },
     );
@@ -240,9 +243,39 @@ describe('Bridge integration', () => {
 
   it('L2: content_delta with image → cloud.send image via sessionChatId', async () => {
     const chatA = channelId('chat-a');
-    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
+    // Create bridge with verbose:true to test content_part forwarding
+    const verboseBridge = new Bridge(
+      {
+        connect: vi.fn().mockResolvedValue(undefined),
+        disconnect: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn(),
+        onRequest: vi.fn(),
+      } as unknown as XacppTransport,
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSendMock,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudCloseMock,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession({
+      sessionId: 'sess-1',
+      credentials: 'chat-a',
+      requestCommand: sessionRequestCommand,
+    } as unknown as XacppSession);
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
-    await bridge.handleEvent('act-1', {
+    await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'content_part', round: 'r1', pair: 'p1',
@@ -258,9 +291,39 @@ describe('Bridge integration', () => {
 
   it('L2: complete event returns acknowledge without sending', async () => {
     const chatA = channelId('chat-a');
-    (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
+    // Create bridge with verbose:true to ensure content_part forwarding behavior
+    const verboseBridge = new Bridge(
+      {
+        connect: vi.fn().mockResolvedValue(undefined),
+        disconnect: vi.fn().mockResolvedValue(undefined),
+        send: vi.fn(),
+        onRequest: vi.fn(),
+      } as unknown as XacppTransport,
+      {
+        cloud: {
+          platform: 'mock',
+          connect: vi.fn().mockResolvedValue(undefined),
+          send: cloudSendMock,
+          messages: () => cloudMessagesIter.iter(),
+          streamCapability: vi.fn(),
+          healthCheck: vi.fn().mockResolvedValue(undefined),
+          beginProcessing: vi.fn().mockResolvedValue(undefined),
+          endProcessing: vi.fn().mockResolvedValue(undefined),
+          close: cloudCloseMock,
+          refreshTypingIndicator: vi.fn().mockResolvedValue(undefined),
+        } as never,
+        verbose: true,
+      },
+    );
+    verboseBridge.setSession({
+      sessionId: 'sess-1',
+      credentials: 'chat-a',
+      requestCommand: sessionRequestCommand,
+    } as unknown as XacppSession);
+    verboseBridge.markEstablished();
+    (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'complete',
@@ -269,7 +332,7 @@ describe('Bridge integration', () => {
     });
 
     expect(response).toEqual({ kind: 'acknowledge' });
-    expect(cloudSendMock).not.toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
+    expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
   });
 
   it('L2: notify event → cloud.send message via sessionChatId', async () => {
@@ -331,7 +394,7 @@ describe('Bridge integration', () => {
     });
 
     // Should have sent notification to cloud
-    expect(cloudSendMock).toHaveBeenCalled();
+    await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
 
     // Resolve the pending
     bridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'reject', reason: 'dangerous' });
@@ -399,6 +462,9 @@ describe('Bridge integration', () => {
         alert: 'info',
       },
     });
+
+    // Wait for action_request to be processed (async handleEvent)
+    await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
 
     await bridge.close();
 

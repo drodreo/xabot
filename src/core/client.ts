@@ -22,9 +22,17 @@ export interface PlatformClient {
   messages(): AsyncIterable<Message>;
   streamCapability(): StreamCapability;
   healthCheck(): Promise<void>;
-  /** Notify user that the message has been received and is being processed. */
-  beginProcessing(chatId: ChannelId, senderId: UserId, messageId?: MessageId): Promise<void>;
-  /** Processing complete, clear the indicator. */
-  endProcessing(chatId: ChannelId, senderId: UserId, messageId?: MessageId): Promise<void>;
+  /**
+   * Notify user that the message has been received and is being processed.
+   */
+  setTypingIndicator(chatId: ChannelId, senderId: UserId, messageId?: MessageId): Promise<void>;
+  /**
+   * Refresh the typing indicator to counter server-side timeout.
+   */
+  refreshTypingIndicator(chatId: ChannelId, senderId: UserId): Promise<void>;
+  /**
+   * Processing complete, clear the indicator.
+   */
+  releaseTypingIndicator(chatId: ChannelId, senderId: UserId, messageId?: MessageId): Promise<void>;
   close(): Promise<void>;
 }

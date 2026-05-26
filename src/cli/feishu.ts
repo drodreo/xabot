@@ -36,9 +36,10 @@ export function registerFeishu(program: Command): void {
 
   feishu
     .command('run')
+    .option('--verbose', 'Enable verbose mode (show thinking/tool indicators)')
     .description('Start Bridge mode with SIGINT/SIGTERM graceful shutdown')
     .action(async () => {
-      const { appId, appSecret, logLevel } = feishu.opts();
+      const { appId, appSecret, logLevel, verbose } = feishu.opts();
       setLevel(logLevel);
       const cloud = createFeishuClient(appId, appSecret, logLevel);
       await cloud.connect();
@@ -47,7 +48,7 @@ export function registerFeishu(program: Command): void {
       const establishHandler = new XabotEstablishHandler();
       const peer = new XacppPeer(transport, establishHandler);
 
-      const bridge = new Bridge(transport, { cloud });
+      const bridge = new Bridge(transport, { cloud, verbose: verbose ?? false });
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
 

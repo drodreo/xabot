@@ -327,11 +327,15 @@ export class WechatClient implements PlatformClient {
     });
   }
 
-  async beginProcessing(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+  async setTypingIndicator(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
     await this.sendTypingStatus(senderId as string, 1);
   }
 
-  async endProcessing(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+  async refreshTypingIndicator(_chatId: ChannelId, senderId: UserId): Promise<void> {
+    await this.sendTypingStatus(senderId as string, 1);
+  }
+
+  async releaseTypingIndicator(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
     await this.sendTypingStatus(senderId as string, 2);
   }
 
