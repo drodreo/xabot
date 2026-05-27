@@ -2,7 +2,7 @@
 name: xabot-cli
 description: |
   SOP for establishing communication with Feishu or WeChat via xabot CLI.
-  Keywords: xabot, feishu, wechat, iLink Bot, bridge, chat
+  Keywords: xabot, feishu, wechat, iLink Bot, bridge, run
 ---
 
 # xabot Communication SOP
@@ -58,29 +58,84 @@ Collect via `sensitive_info`:
 
 ### Steps
 
-1. **Verify connectivity** (requires a previously obtained token)
-
-   ```bash
-   xabot wechat health --token <TOKEN>
-   ```
-
-2. **Start bridge**
+1. **Start bridge**
 
    ```bash
    xabot wechat run
    ```
 
    Long-running process. Stdio is used for XACPP bidirectional message routing.
-   
+
    On first start, the process automatically opens a browser for QR-code login. After the user scans and confirms on their phone, the bridge begins normal operation. If the token expires (`errcode=-14`), the bridge automatically re-triggers the login flow.
 
-3. **Interactive chat**
+   **Note**: `health` command requires a valid token obtained from a previous successful `run` (i.e. at least one completed pairing). Do not run `health` before the first `run`.
 
-   ```bash
-   xabot wechat chat
+---
+
+## Verbose Mode
+
+Both `run` subcommands accept `--verbose` to send intermediate agent state indicators to the IM chat:
+
+```bash
+xabot wechat run --verbose
+xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET run --verbose
+```
+
+When verbose is enabled, the following indicators are sent to the IM:
+- `💭 正在思考...` when the agent enters the thinking phase
+- `🔧 行动中...` when the agent invokes a tool
+- Content parts are forwarded in real-time as they arrive
+
+When verbose is disabled (default), only the final response is sent after the agent completes.
+
+**Do not enable verbose by default.** It makes the IM conversation noisy. Only use `--verbose` when the user explicitly requests it.
+
+---
+
+## Connection Management via aconnman
+
+xabot instances are managed as XACPP external connections through the `aconnman` tool.
+
+### Restarting Connections After Updates
+
+After upgrading xabot, all running connections must be restarted to load the new version.
+
+**⚠️ Correct restart procedure:**
+
+1. **List connections first** to obtain the connection IDs:
+
+   ```
+   aconnman → operation: list
    ```
 
-   Same auto-login behavior as `run`.
+2. **Restart each connection by ID** (not by name — aconnman requires the UUID):
+
+   ```
+   aconnman → operation: restart, id: <connection-id-from-list>
+   ```
+
+**Common mistake**: Calling `aconnman restart` with a name like "xabot" instead of the UUID. This will fail with "record not found". Always list first, then restart by ID.
+
+---
+
+## Installation & Upgrade
+
+### Via npm
+
+```bash
+npm install -g xabot
+```
+
+### Via tar package
+
+```bash
+npm install -g xabot-<version>.tgz
+```
+
+### After installation
+
+1. **Verify**: `xabot --version`
+2. **Restart all connections** via aconnman (see Connection Management section above)
 
 ---
 
@@ -91,3 +146,4 @@ Collect via `sensitive_info`:
 | `errcode=-14` | WeChat token expired | Bridge auto-relogs; no manual action needed |
 | HTTP 401 | Invalid token | Verify the `--token` passed to `health` |
 | Bot cannot reply (WeChat) | No inbound message yet | Wait for user to send a message first |
+| aconnman restart fails with "record not found" | Used connection name instead of UUID | List connections first, then restart by ID |
