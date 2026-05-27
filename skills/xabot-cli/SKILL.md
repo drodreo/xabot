@@ -30,9 +30,15 @@ Platform credentials are stored via the `sensitive_info` tool as environment var
 
 ### Prerequisites
 
-Collect via `sensitive_info`:
-- `XABOT_FEISHU_APP_ID`
-- `XABOT_FEISHU_APP_SECRET`
+Before configuring Feishu connectivity, the user must complete the Feishu app setup. Follow these steps in order:
+
+1. **Guide the user through Feishu app setup**: Follow the instructions in [references/feishu-setup.md](references/feishu-setup.md). This includes creating a Feishu app, configuring bot capabilities, setting permissions (use [references/feishu-permissions.json](references/feishu-permissions.json) for the permission list), and obtaining the App ID and App Secret.
+
+2. **Wait for user confirmation**: After presenting the setup guide, tell the user to complete all preparation work and come back when ready. **Do not proceed** until the user explicitly says they have finished the preparation.
+
+3. **Collect credentials**: Once the user confirms readiness, collect via `sensitive_info`:
+   - `XABOT_FEISHU_APP_ID`
+   - `XABOT_FEISHU_APP_SECRET`
 
 ### Steps
 
