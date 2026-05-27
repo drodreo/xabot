@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * xabot CLI entry point.
+ * xabot-cli CLI entry point.
  *
  * Usage:
- *   npx xabot <platform> [platform-options] <action> [action-options]
+ *   npx xabot-cli <platform> [platform-options] <action> [action-options]
  *
  * Platforms:
  *   feishu    Feishu (Lark) platform commands
@@ -16,15 +16,15 @@ import { readFileSync } from 'node:fs';
 import { registerFeishu } from './feishu.js';
 import { registerWechat } from './wechat.js';
 import { createLogger } from '../core/logger.js';
-const log = createLogger('xabot');
+const log = createLogger('xabot-cli');
 
 const program = new Command();
 const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
 program.version(pkg.version);
 
 program
-  .name('xabot')
-  .description(`xabot — bot bridge CLI
+  .name('xabot-cli')
+  .description(`xabot-cli — bot bridge CLI
 
 Platform subcommands:
   feishu    Feishu (Lark) platform commands
@@ -32,13 +32,13 @@ Platform subcommands:
   .addHelpText(
     'after',
     `Examples:
-  xabot feishu --app-id cli --app-secret secret health
-  xabot feishu --app-id cli --app-secret secret run
-  xabot feishu --app-id cli --app-secret secret chat
+  xabot-cli feishu --app-id cli --app-secret secret health
+  xabot-cli feishu --app-id cli --app-secret secret run
+  xabot-cli feishu --app-id cli --app-secret secret chat
 
-  xabot wechat health --token ilinkbot_xxx
-  xabot wechat run
-  xabot wechat chat`,
+  xabot-cli wechat health --token ilinkbot_xxx
+  xabot-cli wechat run
+  xabot-cli wechat chat`,
   );
 
 registerFeishu(program);

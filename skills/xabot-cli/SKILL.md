@@ -1,15 +1,15 @@
 ---
 name: xabot-cli
 description: |
-  SOP for establishing communication with Feishu or WeChat via xabot CLI.
-  Keywords: xabot, feishu, wechat, iLink Bot, bridge, run
+  SOP for establishing communication with Feishu or WeChat via xabot-cli CLI.
+  Keywords: xabot-cli, feishu, wechat, iLink Bot, bridge, run
 ---
 
-# xabot Communication SOP
+# xabot-cli Communication SOP
 
-xabot bridges XACPP protocol peers to Feishu / WeChat. Follow the steps below to establish communication.
+xabot-cli bridges XACPP protocol peers to Feishu / WeChat. Follow the steps below to establish communication.
 
-**Invocation**: `npx xabot` (auto-downloads if not installed) or `xabot` (if globally installed).
+**Invocation**: `npx xabot-cli` (auto-downloads if not installed) or `xabot-cli` (if globally installed).
 
 ### Choose Platform
 
@@ -19,10 +19,19 @@ If the user does not specify a platform, ask which one to connect to before proc
 
 Platform credentials are stored via the `sensitive_info` tool as environment variables. Never ask for secrets directly in conversation.
 
-| Credential | Environment Variable | Source |
-|------------|---------------------|--------|
-| Feishu App ID | `XABOT_FEISHU_APP_ID` | User provides |
-| Feishu App Secret | `XABOT_FEISHU_APP_SECRET` | User provides |
+**Naming rule**: `XABOT_FEISHU_APP_ID` / `XABOT_FEISHU_APP_SECRET` as base names. When multiple Feishu connections exist, append a numeric suffix: `XABOT_FEISHU_APP_ID_1`, `XABOT_FEISHU_APP_ID_2`, etc.
+
+**Before creating a new connection**, query existing sensitive info entries to determine the next available suffix:
+
+1. `sensitive_info` → `action: list, siType: env_var` → count entries whose key starts with `XABOT_FEISHU_APP_ID`
+2. If count = 0 → use base name: `XABOT_FEISHU_APP_ID`, `XABOT_FEISHU_APP_SECRET`
+3. If count = N (N ≥ 1) → use suffix `_N`: `XABOT_FEISHU_APP_ID_N`, `XABOT_FEISHU_APP_SECRET_N`
+
+| Existing Count | New Connection Credentials |
+|---------------|---------------------------|
+| 0 | `XABOT_FEISHU_APP_ID`, `XABOT_FEISHU_APP_SECRET` |
+| 1 | `XABOT_FEISHU_APP_ID_1`, `XABOT_FEISHU_APP_SECRET_1` |
+| 2 | `XABOT_FEISHU_APP_ID_2`, `XABOT_FEISHU_APP_SECRET_2` |
 
 ---
 
@@ -36,27 +45,48 @@ Before configuring Feishu connectivity, the user must complete the Feishu app se
 
 2. **Wait for user confirmation**: After presenting the setup guide, tell the user to complete all preparation work and come back when ready. **Do not proceed** until the user explicitly says they have finished the preparation.
 
-3. **Collect credentials**: Once the user confirms readiness, collect via `sensitive_info`:
-   - `XABOT_FEISHU_APP_ID`
-   - `XABOT_FEISHU_APP_SECRET`
+3. **Collect credentials**: Once the user confirms readiness, query existing entries and determine the next suffix, then collect via `sensitive_info`.
 
 ### Steps
 
 1. **Verify connectivity**
 
+   POSIX (macOS / Linux):
+
    ```bash
-   xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET health
+   xabot-cli feishu --app-id "${XABOT_FEISHU_APP_ID}" --app-secret "${XABOT_FEISHU_APP_SECRET}" health
+   ```
+
+   Windows (cmd):
+
+   ```cmd
+   xabot-cli feishu --app-id %XABOT_FEISHU_APP_ID% --app-secret %XABOT_FEISHU_APP_SECRET% health
    ```
 
    Success: exit code 0. Failure: stderr prints error details.
 
 2. **Start bridge**
 
+   POSIX (macOS / Linux):
+
    ```bash
-   xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET run
+   xabot-cli feishu --app-id "${XABOT_FEISHU_APP_ID}" --app-secret "${XABOT_FEISHU_APP_SECRET}" run
+   ```
+
+   Windows (cmd):
+
+   ```cmd
+   xabot-cli feishu --app-id %XABOT_FEISHU_APP_ID% --app-secret %XABOT_FEISHU_APP_SECRET% run
    ```
 
    Long-running process. Stdio is used for XACPP bidirectional message routing.
+
+   Accepts `--verbose` to send intermediate agent state indicators to the IM:
+   - `💭 正在思考...` when the agent enters the thinking phase
+   - `🔧 行动中...` when the agent invokes a tool
+   - Content parts are forwarded in real-time as they arrive
+
+   **Do not enable verbose by default.** Only use `--verbose` when the user explicitly requests it.
 
 ---
 
@@ -67,10 +97,12 @@ Before configuring Feishu connectivity, the user must complete the Feishu app se
 1. **Start bridge**
 
    ```bash
-   xabot wechat run
+   xabot-cli wechat run
    ```
 
    Long-running process. Stdio is used for XACPP bidirectional message routing.
+
+   Accepts `--verbose` (same indicators as Feishu). Do not enable by default.
 
    On first start, the process automatically opens a browser for QR-code login. After the user scans and confirms on their phone, the bridge begins normal operation. If the token expires (`errcode=-14`), the bridge automatically re-triggers the login flow.
 
@@ -78,33 +110,34 @@ Before configuring Feishu connectivity, the user must complete the Feishu app se
 
 ---
 
-## Verbose Mode
-
-Both `run` subcommands accept `--verbose` to send intermediate agent state indicators to the IM chat:
-
-```bash
-xabot wechat run --verbose
-xabot feishu --app-id $XABOT_FEISHU_APP_ID --app-secret $XABOT_FEISHU_APP_SECRET run --verbose
-```
-
-When verbose is enabled, the following indicators are sent to the IM:
-- `💭 正在思考...` when the agent enters the thinking phase
-- `🔧 行动中...` when the agent invokes a tool
-- Content parts are forwarded in real-time as they arrive
-
-When verbose is disabled (default), only the final response is sent after the agent completes.
-
-**Do not enable verbose by default.** It makes the IM conversation noisy. Only use `--verbose` when the user explicitly requests it.
-
----
-
 ## Connection Management via aconnman
 
-xabot instances are managed as XACPP external connections through the `aconnman` tool.
+xabot-cli instances are managed as XACPP external connections through the `aconnman` tool.
+
+### Environment Variable Placeholder in aconnman args
+
+When configuring `connectionSpec.args` for Feishu connections, credentials must reference environment variables stored via the `sensitive_info` tool.
+
+**Placeholder format depends on the current platform** (aconnman config is per-instance, each instance runs on one OS only):
+
+- **macOS / Linux**: `${VAR_NAME}` (POSIX shell expands)
+- **Windows**: `%VAR_NAME%` (cmd.exe expands)
+
+macOS / Linux:
+
+```json
+["feishu", "--app-id", "${XABOT_FEISHU_APP_ID}", "--app-secret", "${XABOT_FEISHU_APP_SECRET}", "run"]
+```
+
+Windows:
+
+```json
+["feishu", "--app-id", "%XABOT_FEISHU_APP_ID%", "--app-secret", "%XABOT_FEISHU_APP_SECRET%", "run"]
+```
 
 ### Restarting Connections After Updates
 
-After upgrading xabot, all running connections must be restarted to load the new version.
+After upgrading xabot-cli, all running connections must be restarted to load the new version.
 
 **⚠️ Correct restart procedure:**
 
@@ -120,7 +153,7 @@ After upgrading xabot, all running connections must be restarted to load the new
    aconnman → operation: restart, id: <connection-id-from-list>
    ```
 
-**Common mistake**: Calling `aconnman restart` with a name like "xabot" instead of the UUID. This will fail with "record not found". Always list first, then restart by ID.
+**Common mistake**: Calling `aconnman restart` with a name like "xabot-cli" instead of the UUID. This will fail with "record not found". Always list first, then restart by ID.
 
 ---
 
@@ -128,29 +161,29 @@ After upgrading xabot, all running connections must be restarted to load the new
 
 ### Step 1: Check local assets
 
-优先使用技能包 [assets/](assets/) 目录下自带的本地安装包：
+Prefer the local tarball from the skill's [assets/](assets/) directory:
 
 ```bash
-ls assets/xabot-*.tgz
+ls assets/xabot-cli-*.tgz
 ```
 
-如果存在，使用本地包安装（替换为实际文件名）：
+If found, install from the local package (replace with actual filename):
 
 ```bash
-npm install -g assets/xabot-<version>.tgz
+npm install -g assets/xabot-cli-<version>.tgz
 ```
 
 ### Step 2: Fallback to npm
 
-仅当 `assets/` 目录下没有 tgz 文件时，从 npm 安装：
+Only when no tgz file exists in `assets/`, install from npm:
 
 ```bash
-npm install -g xabot
+npm install -g xabot-cli
 ```
 
 ### After installation
 
-1. **Verify**: `xabot --version`
+1. **Verify**: `xabot-cli --version`
 2. **Restart all connections** via aconnman (see Connection Management section above)
 
 ---
@@ -163,3 +196,4 @@ npm install -g xabot
 | HTTP 401 | Invalid token | Verify the `--token` passed to `health` |
 | Bot cannot reply (WeChat) | No inbound message yet | Wait for user to send a message first |
 | aconnman restart fails with "record not found" | Used connection name instead of UUID | List connections first, then restart by ID |
+| Windows: `xacpp stdio establish failed: connection closed` | aconnman args used `${VAR}` instead of `%VAR%` — cmd.exe does not expand `${}` | Reconfigure aconnman args using `%VAR_NAME%` format (Windows). Verify environment variable key exists in sensitive_info. |
