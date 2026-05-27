@@ -120,16 +120,26 @@ After upgrading xabot, all running connections must be restarted to load the new
 
 ## Installation & Upgrade
 
-### Via npm
+### Step 1: Check local assets
+
+优先使用技能包 [assets/](assets/) 目录下自带的本地安装包：
+
+```bash
+ls assets/xabot-*.tgz
+```
+
+如果存在，使用本地包安装（替换为实际文件名）：
+
+```bash
+npm install -g assets/xabot-<version>.tgz
+```
+
+### Step 2: Fallback to npm
+
+仅当 `assets/` 目录下没有 tgz 文件时，从 npm 安装：
 
 ```bash
 npm install -g xabot
-```
-
-### Via tar package
-
-```bash
-npm install -g xabot-<version>.tgz
 ```
 
 ### After installation
