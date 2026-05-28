@@ -3,10 +3,12 @@ import { FeishuClient, type FeishuClientConfig } from '../platforms/feishu/clien
 import { health } from './health.js';
 import { run } from './run.js';
 import { chat, type ChatOptions } from './chat.js';
-import { setLevel } from '../core/logger.js';
+import { createLogger, setLevel } from '../core/logger.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
 import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
+
+const log = createLogger('feishu');
 
 function createFeishuClient(appId: string, appSecret: string, logLevel?: string): FeishuClient {
   const cfg: FeishuClientConfig = { appId, appSecret };
@@ -41,8 +43,17 @@ export function registerFeishu(program: Command): void {
     .action(async () => {
       const { appId, appSecret, logLevel, verbose } = feishu.opts();
       setLevel(logLevel);
+
+      const mask = (s: string, head: number, tail: number) =>
+        s.length <= head + tail ? '****' : `${s.slice(0, head)}****${s.slice(-tail)}`;
+
+      log.info('run starting | app_id=%s | app_secret=%s | node=%s | platform=%s | cwd=%s | pid=%d',
+        mask(appId, 4, 4), mask(appSecret, 2, 2), process.version, process.platform,
+        process.cwd(), process.pid);
+
       const cloud = createFeishuClient(appId, appSecret, logLevel);
       await cloud.connect();
+      log.info('cloud connected');
 
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
@@ -60,6 +71,7 @@ export function registerFeishu(program: Command): void {
 
       bridge.run();
       await peer.connect();
+      log.info('xacpp peer connected, entering bridge loop');
 
       await run(bridge, peer);
     });

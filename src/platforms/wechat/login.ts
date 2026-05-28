@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import process from 'node:process';
 
 export interface LoginResult {
@@ -30,10 +30,15 @@ interface QRCodeStatusResponse {
 }
 
 function defaultOpenUrl(url: string): void {
-  const cmd = process.platform === 'darwin' ? 'open'
-    : process.platform === 'win32' ? 'start'
-    : 'xdg-open';
-  exec(`${cmd} "${url}"`);
+  if (process.platform === 'win32') {
+    // PowerShell 是 GUI subsystem 进程，不弹控制台窗口
+    // Start-Process 用 Shell API 打开默认浏览器
+    spawn('powershell', ['-Command', `Start-Process '${url}'`], { stdio: 'ignore' });
+  } else if (process.platform === 'darwin') {
+    spawn('open', [url], { stdio: 'ignore' });
+  } else {
+    spawn('xdg-open', [url], { stdio: 'ignore' });
+  }
 }
 
 async function getQRCode(): Promise<QRCodeResponse> {

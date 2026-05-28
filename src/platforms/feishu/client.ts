@@ -60,7 +60,14 @@ export class FeishuClient implements PlatformClient {
     // which rejects implicit undefined, so we build the options object in two steps.
     const wsBase = { appId: config.appId, appSecret: config.appSecret, domain: Domain.Feishu };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.wsClient = new WSClient({ ...wsBase, loggerLevel: sdkLevel }) as any;
+    this.wsClient = new WSClient({
+      ...wsBase,
+      loggerLevel: sdkLevel,
+      onReady: () => { log.info('WSClient onReady: ws connected'); },
+      onError: (err: unknown) => { log.error('WSClient onError: %s', err instanceof Error ? err.message : String(err)); },
+      onReconnecting: () => { log.warn('WSClient onReconnecting'); },
+      onReconnected: () => { log.info('WSClient onReconnected'); },
+    } as any);
 
     const httpBase = { appId: config.appId, appSecret: config.appSecret, domain: Domain.Feishu };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -73,6 +80,7 @@ export class FeishuClient implements PlatformClient {
     // that messages() async generator will consume.
     this.eventDispatcher.register({
       'im.message.receive_v1': async (data: FeishuMessageEvent) => {
+        log.debug('im.message.receive_v1 received');
         // If a reader is waiting, resolve immediately; otherwise buffer.
         if (this.messageResolve) {
           const resolve = this.messageResolve;
