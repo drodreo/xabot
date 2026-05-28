@@ -1237,6 +1237,7 @@ describe('Bridge', () => {
   it('queue: second action_request queues without cloud.send', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    cloudSend.mockClear();
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const p1 = bridge.handleEvent('act-1', {
@@ -1288,6 +1289,7 @@ describe('Bridge', () => {
   it('queue: different targetKeys do not interfere', async () => {
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
     bridge.markEstablished();
+    cloudSend.mockClear();
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
     (bridge as any).bindActivity(channelId('chat-b'), userId('u2'), 'act-2');
 

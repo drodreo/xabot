@@ -799,11 +799,19 @@ export class Bridge {
   /** Mark the establish handshake as completed — switches to Phase 2 routing. */
   markEstablished(): void {
     this.established = true;
+    if (this.cloud && this.sessionChatId) {
+      this.cloud.send(this.sessionChatId, { type: 'text', text: '✅ 连接已建立' })
+        .catch((err) => log.debug('established notification send failed: %s', err));
+    }
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.established && this.cloud && this.sessionChatId) {
+      await this.cloud.send(this.sessionChatId, { type: 'text', text: '👋 连接已关闭' })
+        .catch((err) => log.debug('disconnect notification send failed: %s', err));
+    }
     this.abortCtrl.abort();
     this.runPromise = null;
     for (const [, pq] of this.pendingQueues) {
