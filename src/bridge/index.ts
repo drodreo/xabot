@@ -431,7 +431,7 @@ export class Bridge {
       case 'tool_result': {
         if (!chatId) return { kind: 'acknowledge' };
         const payload = event.event;
-        if (payload.toolName === 'send_message') {
+        if (payload.toolName === 'send_file') {
           for (const part of payload.parts) {
             await this._sendContentPart(chatId, target.senderId, activityId, part);
           }

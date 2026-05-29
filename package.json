@@ -1,6 +1,6 @@
 {
   "name": "xabot-cli",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Bidirectional message bridge connecting XACPP-enabled Agents to Feishu and WeChat.",
   "author": "drodreo",
   "license": "MIT",
