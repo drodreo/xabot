@@ -40,10 +40,13 @@ export async function saveTemp(
     const buf = first;
     const urlPath = second ?? '';
     const fileNameHint = third;
-    const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${basename(new URL(urlPath).pathname || 'blob')}`;
+    const baseName = basename(new URL(urlPath).pathname || 'blob');
+    const detected = await fileTypeFromBuffer(buf);
+    const finalName = baseName.includes('.') ? baseName : (detected ? `${baseName}.${detected.ext}` : baseName);
+    const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${finalName}`;
     await writeFile(tmpPath, buf);
     const hash = createHash('sha256').update(buf).digest('hex');
-    const mimeType = await detectMimeType(buf, fileNameHint);
+    const mimeType = detected?.mime || inferMimeFromExt(fileNameHint ?? '');
 
     log.debug('saveTemp: %s → %s (%d bytes, sha256=%s)', urlPath.slice(0, 60), tmpPath, buf.length, hash.slice(0, 12));
 

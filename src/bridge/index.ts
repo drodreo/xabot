@@ -136,9 +136,9 @@ export class Bridge {
   private formatActionMessage(payload: ActionRequestEvent): string {
     const alertLabel = payload.alert === 'critical' ? '🔴' : payload.alert === 'warn' ? '🟡' : 'ℹ️';
     return [
-      `${alertLabel} [Authorization Request] ${payload.intent || payload.description}`,
-      `Tool: ${payload.toolName}`,
-      payload.arguments ? `Arguments: ${payload.arguments}` : '',
+      `${alertLabel} [请求授权] ${payload.intent || payload.description}`,
+      `工具：${payload.toolName}`,
+      payload.arguments ? `参数：${payload.arguments}` : '',
       '───────────────',
       'a: 始终允许 | y: 单次允许',
       'n [原因]: 本次拒绝（可附带拒绝原因）',
@@ -148,9 +148,9 @@ export class Bridge {
 
   /** Format question for cloud display. */
   private formatQuestionMessage(payload: QuestionEvent): string {
-    const lines = [`❓ [Question] ${payload.question}`];
+    const lines = [`❓ [提问] ${payload.question}`];
     if (payload.options.length > 0) {
-      lines.push('Options:');
+      lines.push('选项：');
       payload.options.forEach((opt, i) => lines.push(`  ${i + 1}. ${opt}`));
       lines.push('───────────────');
       lines.push(`回复 1~${payload.options.length} 选择选项，或直接输入文本`);
@@ -165,13 +165,21 @@ export class Bridge {
 
   /** Format sensitive_info_operation for cloud display. */
   private formatSensitiveInfoMessage(payload: SensitiveInfoOperationEvent): string {
-    const lines = [`🔒 [Sensitive Info Operation] ${payload.operation.type}`];
+    const lines = [`🔒 [敏感信息操作] ${payload.operation.type}`];
     const items = payload.operation.items;
-    lines.push('Items:');
+    lines.push('信息项：');
     items.forEach((item, i) => lines.push(`  ${i + 1}. ${item.displayText} (${item.siType})`));
     lines.push('───────────────');
     lines.push('逐行回复值（每行对应一项） | t: 取消执行');
     return lines.join('\n');
+  }
+
+  /** Format TraceableEvent (info/warn/error) for cloud display. */
+  private formatTraceable(icon: string, event: { title: string; content: string }): string {
+    const title = event.title?.trim() || '';
+    const content = event.content?.trim() || '';
+    if (title && content) return `${icon} ${title}\n${content}`;
+    return `${icon} ${title || content}`;
   }
 
   /** Parse user text into a pending response, or null if unrecognized. */
@@ -515,19 +523,19 @@ export class Bridge {
 
       case 'info': {
         if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: `ℹ️ ${event.event.content}` });
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('ℹ️', event.event) });
         return { kind: 'acknowledge' };
       }
 
       case 'warn': {
         if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: `⚠️ ${event.event.content}` });
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('⚠️', event.event) });
         return { kind: 'acknowledge' };
       }
 
       case 'error': {
         if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: `❌ ${event.event.content}` });
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('❌', event.event) });
         return { kind: 'acknowledge' };
       }
 

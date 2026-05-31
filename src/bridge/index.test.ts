@@ -693,7 +693,7 @@ describe('Bridge', () => {
       event: { type: 'info', title: 't', content: 'info msg' },
     } as any);
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'ℹ️ info msg' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'ℹ️ t\ninfo msg' });
   });
 
   it('handleEvent warn sends prefixed message to cloud', async () => {
@@ -707,7 +707,7 @@ describe('Bridge', () => {
       event: { type: 'warn', title: 't', content: 'warn msg' },
     } as any);
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '⚠️ warn msg' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '⚠️ t\nwarn msg' });
   });
 
   it('handleEvent error sends prefixed message to cloud', async () => {
@@ -721,7 +721,7 @@ describe('Bridge', () => {
       event: { type: 'error', title: 't', content: 'error msg' },
     } as any);
 
-    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '❌ error msg' });
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '❌ t\nerror msg' });
   });
 
   it('handleEvent without sessionChatId returns acknowledge without sending', async () => {
