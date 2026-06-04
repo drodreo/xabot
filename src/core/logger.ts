@@ -42,7 +42,11 @@ export function createLogger(module: string): Logger {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return;
     const ts = new Date().toISOString().slice(11, 23);
     const msg = args.length > 0 ? format(fmt, args) : fmt;
-    process.stdout.write(`[${ts}] [${level.toUpperCase().padEnd(5)}] [${module}] ${msg}\n`);
+    try {
+      process.stdout.write(`[${ts}] [${level.toUpperCase().padEnd(5)}] [${module}] ${msg}\n`);
+    } catch {
+      // EPIPE: pipe closed (e.g. parent process exited), silently ignore
+    }
   }
 
   return {
