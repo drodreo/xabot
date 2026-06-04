@@ -3,6 +3,7 @@ import { StreamCapability } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
 import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart, ActionRequestEvent, QuestionEvent, SensitiveInfoOperationEvent } from 'xacpp';
 import { parseInput } from './input-parser.js';
+import { i18nResource } from '../i18n/index.js';
 import { createLogger } from '../core/logger.js';
 const log = createLogger('Bridge');
 import type { MessageId } from '../core/types.js';
@@ -176,8 +177,8 @@ export class Bridge {
 
   /** Format TraceableEvent (info/warn/error) for cloud display. */
   private formatTraceable(icon: string, event: { title: string; content: string }): string {
-    const title = event.title?.trim() || '';
-    const content = event.content?.trim() || '';
+    const title = i18nResource(event.title?.trim() || '');
+    const content = i18nResource(event.content?.trim() || '');
     if (title && content) return `${icon} ${title}\n${content}`;
     return `${icon} ${title || content}`;
   }
