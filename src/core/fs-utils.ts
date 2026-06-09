@@ -1,4 +1,4 @@
-import { writeFile, unlink, readFile } from 'node:fs/promises';
+import { writeFile, unlink, readFile, rename } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
 import { tmpdir } from 'node:os';
@@ -58,9 +58,20 @@ export async function saveTemp(
     const hash = createHash('sha256').update(buf).digest('hex');
     const mimeType = await detectMimeType(buf, fileNameHint);
 
-    log.debug('saveTemp: existing %s (%d bytes, sha256=%s)', existingPath, buf.length, hash.slice(0, 12));
+    // 检测并补齐文件扩展名
+    let finalPath = existingPath;
+    const basename = existingPath.split('/').pop() ?? existingPath;
+    if (!basename.includes('.')) {
+      const detected = await fileTypeFromBuffer(buf);
+      if (detected?.ext) {
+        finalPath = `${existingPath}.${detected.ext}`;
+        await rename(existingPath, finalPath);
+      }
+    }
 
-    return { localUri: existingPath, sha256: hash, sizeBytes: buf.length, mimeType };
+    log.debug('saveTemp: existing %s (%d bytes, sha256=%s)', finalPath, buf.length, hash.slice(0, 12));
+
+    return { localUri: finalPath, sha256: hash, sizeBytes: buf.length, mimeType };
   }
 }
 
