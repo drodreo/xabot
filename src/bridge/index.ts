@@ -142,8 +142,8 @@ export class Bridge {
       payload.arguments ? `参数：${payload.arguments}` : '',
       '───────────────',
       'a: 始终允许 | y: 单次允许',
-      'n [原因]: 本次拒绝（可附带拒绝原因）',
       'c: 取消执行',
+      '直接输入文本即拒绝（文本将作为拒绝原因）',
     ].filter(Boolean).join('\n');
   }
 
@@ -191,12 +191,8 @@ export class Bridge {
       case 'action_request': {
         if (input === 'a') return { kind: 'action', requestId: item.requestId, type: 'approve_always' };
         if (input === 'y') return { kind: 'action', requestId: item.requestId, type: 'approve' };
-        if (input === 'n' || input.startsWith('n ')) {
-          const reason = text.trim().slice(1).trim() || '用户拒绝';
-          return { kind: 'action', requestId: item.requestId, type: 'reject', reason };
-        }
         if (input === 'c') return { kind: 'action', requestId: item.requestId, type: 'reject', reason: '用户取消执行' };
-        return null;
+        return { kind: 'action', requestId: item.requestId, type: 'reject', reason: text.trim() };
       }
 
       case 'question': {

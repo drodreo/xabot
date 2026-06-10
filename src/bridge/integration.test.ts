@@ -503,12 +503,12 @@ describe('Bridge integration', () => {
     expect(response).toEqual({ kind: 'action', requestId: 'req-invoke', type: 'approve' });
   });
 
-  it('L6: invoke text with invalid input sends hint', async () => {
+  it('L6: invoke text with free text rejects action_request', async () => {
     const chatA = channelId('chat-a');
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     // Agent sends action_request → pending
-    bridge.handleEvent('act-1', {
+    const eventPromise = bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
         type: 'action_request',
@@ -524,16 +524,13 @@ describe('Bridge integration', () => {
     // Reset cloud send count to isolate this test
     cloudSendMock.mockClear();
 
-    // User replies with invalid command
-    cloudMessagesIter.push(makeMessage(chatA, 'invalid_command'));
+    // User replies with free text — treated as reject with text as reason
+    cloudMessagesIter.push(makeMessage(chatA, '太危险了'));
     cloudMessagesIter.stop();
     await bridge.run();
 
-    // Should send hint
-    const hintCall = cloudSendMock.mock.calls.find((c) =>
-      c[1]?.type === 'text' && c[1]?.text?.includes('无法识别'),
-    );
-    expect(hintCall).toBeTruthy();
+    const response = await eventPromise;
+    expect(response).toEqual({ kind: 'action', requestId: 'req-invalid', type: 'reject', reason: '太危险了' });
   });
 
   it('L6: invoke text routes question numeric response', async () => {

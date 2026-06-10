@@ -1330,7 +1330,7 @@ describe('Bridge', () => {
 
   // ── tryParsePendingResponse coverage ────────────────────────────────────
 
-  it('tryParsePendingResponse action_request a/y/n/t', async () => {
+  it('tryParsePendingResponse action_request a/y/free text reject', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const event: any = {
@@ -1346,10 +1346,11 @@ describe('Bridge', () => {
 
     expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve_always' });
     expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
-    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '用户拒绝' });
-    expect((bridge as any).tryParsePendingResponse(item, 'n 太危险了')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '太危险了' });
     expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '用户取消执行' });
-    expect((bridge as any).tryParsePendingResponse(item, 'invalid')).toBeNull();
+    // Free text is treated as reject with the text as reason
+    expect((bridge as any).tryParsePendingResponse(item, '太危险了')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '太危险了' });
+    expect((bridge as any).tryParsePendingResponse(item, '不需要')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '不需要' });
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: 'n' });
   });
 
   it('tryParsePendingResponse question numeric option and free text', async () => {
