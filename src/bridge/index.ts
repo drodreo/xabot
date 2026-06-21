@@ -1,7 +1,8 @@
 import type { ChannelId, UserId } from '../core/types.js';
 import { StreamCapability } from '../core/types.js';
 import type { PlatformClient } from '../core/client.js';
-import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart, ActionRequestEvent, QuestionEvent, SensitiveInfoOperationEvent } from 'xacpp';
+import type { XacppSession, XacppTransport, XacppActivityEvent, XacppCommand, XacppResponse, ContentPart, ActionRequestPayload, QuestionPayload, SensitiveInfoOperationPayload, NotifyPayload } from 'xacpp';
+import { acknowledge, genericResponse, errorResponse, genericCommand, commandName } from 'xacpp';
 import { parseInput } from './input-parser.js';
 import { i18nResource } from '../i18n/index.js';
 import { createLogger } from '../core/logger.js';
@@ -13,7 +14,7 @@ interface PendingItem {
   type: 'action_request' | 'question' | 'sensitive_info_operation';
   chatId: ChannelId;
   senderId: UserId;
-  eventPayload: ActionRequestEvent | QuestionEvent | SensitiveInfoOperationEvent;
+  eventPayload: ActionRequestPayload | QuestionPayload | SensitiveInfoOperationPayload;
   resolve: (response: XacppResponse) => void;
 }
 
@@ -128,13 +129,13 @@ export class Bridge {
   private createPendingItem(
     chatId: ChannelId, senderId: UserId,
     type: 'action_request' | 'question' | 'sensitive_info_operation',
-    eventPayload: ActionRequestEvent | QuestionEvent | SensitiveInfoOperationEvent,
+    eventPayload: ActionRequestPayload | QuestionPayload | SensitiveInfoOperationPayload,
   ): PendingItem {
     return { requestId: eventPayload.requestId, type, chatId, senderId, eventPayload, resolve: () => {} };
   }
 
   /** Format action_request for cloud display. */
-  private formatActionMessage(payload: ActionRequestEvent): string {
+  private formatActionMessage(payload: ActionRequestPayload): string {
     const alertLabel = payload.alert === 'critical' ? '🔴' : payload.alert === 'warn' ? '🟡' : 'ℹ️';
     return [
       `${alertLabel} [请求授权] ${payload.intent || payload.description}`,
@@ -148,7 +149,7 @@ export class Bridge {
   }
 
   /** Format question for cloud display. */
-  private formatQuestionMessage(payload: QuestionEvent): string {
+  private formatQuestionMessage(payload: QuestionPayload): string {
     const lines = [`❓ [提问] ${payload.question}`];
     if (payload.options.length > 0) {
       lines.push('选项：');
@@ -165,7 +166,7 @@ export class Bridge {
   }
 
   /** Format sensitive_info_operation for cloud display. */
-  private formatSensitiveInfoMessage(payload: SensitiveInfoOperationEvent): string {
+  private formatSensitiveInfoMessage(payload: SensitiveInfoOperationPayload): string {
     const lines = [`🔒 [敏感信息操作] ${payload.operation.type}`];
     const items = payload.operation.items;
     lines.push('信息项：');
@@ -176,9 +177,9 @@ export class Bridge {
   }
 
   /** Format TraceableEvent (info/warn/error) for cloud display. */
-  private formatTraceable(icon: string, event: { title: string; content: string }): string {
-    const title = i18nResource(event.title?.trim() || '');
-    const content = i18nResource(event.content?.trim() || '');
+  private formatTraceable(icon: string, data: { title: string; content: string }): string {
+    const title = i18nResource(data.title?.trim() || '');
+    const content = i18nResource(data.content?.trim() || '');
     if (title && content) return `${icon} ${title}\n${content}`;
     return `${icon} ${title || content}`;
   }
@@ -189,33 +190,33 @@ export class Bridge {
 
     switch (item.type) {
       case 'action_request': {
-        if (input === 'a') return { kind: 'action', requestId: item.requestId, type: 'approve_always' };
-        if (input === 'y') return { kind: 'action', requestId: item.requestId, type: 'approve' };
-        if (input === 'c') return { kind: 'action', requestId: item.requestId, type: 'reject', reason: '用户取消执行' };
-        return { kind: 'action', requestId: item.requestId, type: 'reject', reason: text.trim() };
+        if (input === 'a') return genericResponse("action", { requestId: item.requestId, type: 'approve_always' });
+        if (input === 'y') return genericResponse("action", { requestId: item.requestId, type: 'approve' });
+        if (input === 'c') return genericResponse("action", { requestId: item.requestId, type: 'reject', reason: '用户取消执行' });
+        return genericResponse("action", { requestId: item.requestId, type: 'reject', reason: text.trim() });
       }
 
       case 'question': {
-        const payload = item.eventPayload as QuestionEvent;
-        if (input === 'c') return { kind: 'question', requestId: item.requestId, type: 'skip', reason: '用户取消执行' };
+        const payload = item.eventPayload as QuestionPayload;
+        if (input === 'c') return genericResponse("question", { requestId: item.requestId, type: 'skip', reason: '用户取消执行' });
         if (payload.options.length > 0) {
           const num = parseInt(input, 10);
           if (!isNaN(num) && num >= 1 && num <= payload.options.length) {
-            return { kind: 'question', requestId: item.requestId, type: 'answer', content: payload.options[num - 1]! };
+            return genericResponse("question", { requestId: item.requestId, type: 'answer', content: payload.options[num - 1]! });
           }
         }
-        return { kind: 'question', requestId: item.requestId, type: 'answer', content: text.trim() };
+        return genericResponse("question", { requestId: item.requestId, type: 'answer', content: text.trim() });
       }
 
       case 'sensitive_info_operation': {
-        const siPayload = item.eventPayload as SensitiveInfoOperationEvent;
+        const siPayload = item.eventPayload as SensitiveInfoOperationPayload;
         if (input === 'c') {
           const results = siPayload.operation.items.map((itm) =>
             siPayload.operation.type === 'collect'
               ? { type: 'collect_skipped' as const, key: itm.key, reason: '用户取消执行' }
               : { type: 'delete_rejected' as const, id: itm.id ?? '', reason: '用户取消执行' }
           );
-          return { kind: 'sensitive_info_operation', requestId: item.requestId, results };
+          return genericResponse("sensitive_info_operation", { requestId: item.requestId, results });
         }
         const lines = text.trim().split('\n');
         const items = siPayload.operation.items;
@@ -226,10 +227,10 @@ export class Bridge {
               ? { type: 'provided' as const, key: itm.key, value }
               : { type: 'collect_skipped' as const, key: itm.key, reason: '未提供值' };
           });
-          return { kind: 'sensitive_info_operation', requestId: item.requestId, results };
+          return genericResponse("sensitive_info_operation", { requestId: item.requestId, results });
         }
         const results = items.map((itm: { id?: string }) => ({ type: 'deleted' as const, id: itm.id ?? '' }));
-        return { kind: 'sensitive_info_operation', requestId: item.requestId, results };
+        return genericResponse("sensitive_info_operation", { requestId: item.requestId, results });
       }
     }
   }
@@ -326,29 +327,88 @@ export class Bridge {
     }
   }
 
+  /** Route interaction command to pending queue. Shared by handleCommand for action_request/question/sensitive_info_operation. */
+  private async _handleInteractionCommand(
+    type: 'action_request' | 'question' | 'sensitive_info_operation',
+    payload: ActionRequestPayload | QuestionPayload | SensitiveInfoOperationPayload,
+  ): Promise<XacppResponse> {
+    if (!this.cloud) return acknowledge();
+
+    // Look up target from activity
+    const target = this.activityToTarget.get(payload.activity);
+    if (!target) return acknowledge();
+    const { chatId, senderId } = target;
+
+    const key = this.targetKey(chatId, senderId);
+    const pq = this.ensureQueue(key);
+    const item = this.createPendingItem(chatId, senderId, type, payload);
+    const pendingPromise = new Promise<XacppResponse>((resolve) => { item.resolve = resolve; });
+
+    if (!pq.active) {
+      pq.active = item;
+      try {
+        let message: string;
+        switch (type) {
+          case 'action_request': message = this.formatActionMessage(payload as ActionRequestPayload); break;
+          case 'question': message = this.formatQuestionMessage(payload as QuestionPayload); break;
+          case 'sensitive_info_operation': message = this.formatSensitiveInfoMessage(payload as SensitiveInfoOperationPayload); break;
+        }
+        await this.cloud.send(chatId, { type: 'text', text: message });
+      } catch {
+        pq.active = null;
+        item.resolve(errorResponse('send_failed', `failed to forward ${type} to cloud`));
+      }
+    } else {
+      pq.queue.push(item);
+    }
+    return pendingPromise;
+  }
+
   /** Handle Command from downstream Agent (forwarded via XabotSessionHandler.onCommand). */
   async handleCommand(command: XacppCommand): Promise<XacppResponse> {
-    if (!this.cloud) return { kind: 'acknowledge' };
-    if (typeof command === 'object' && 'message' in command) {
+    if (!this.cloud) return acknowledge();
+
+    const name = commandName(command);
+
+    // Message command: agent sends content directly to the session's chatId
+    if (name === 'message' && typeof command === 'object' && 'generic' in command) {
       const chatId = this.sessionChatId;
-      if (!chatId) return { kind: 'acknowledge' };
-      for (const part of command.message.content) {
+      if (!chatId) return acknowledge();
+      const args = command.generic.arguments as { content: ContentPart[] };
+      for (const part of args.content) {
         await this._sendContentPart(chatId, '' as UserId, '', part);
       }
-      return { kind: 'acknowledge' };
+      return acknowledge();
     }
-    return { kind: 'acknowledge' };
+
+    // Interaction commands (moved from Event to Command in xacpp 0.7.x)
+    if (typeof command === 'object' && 'generic' in command) {
+      const args = command.generic.arguments as Record<string, unknown>;
+      switch (name) {
+        case 'action_request':
+          return this._handleInteractionCommand('action_request', args as unknown as ActionRequestPayload);
+        case 'question':
+          return this._handleInteractionCommand('question', args as unknown as QuestionPayload);
+        case 'sensitive_info_operation':
+          return this._handleInteractionCommand('sensitive_info_operation', args as unknown as SensitiveInfoOperationPayload);
+      }
+    }
+
+    return acknowledge();
   }
 
   /** Handle Event from downstream Agent (forwarded via XabotSessionHandler.onEvent). */
   async handleEvent(activityId: string, event: XacppActivityEvent): Promise<XacppResponse> {
-    if (!this.cloud) return { kind: 'acknowledge' };
+    if (!this.cloud) return acknowledge();
     const target = this.activityToTarget.get(activityId);
-    if (!target) return { kind: 'acknowledge' };
+    if (!target) return acknowledge();
     const { chatId } = target;
 
+    const eventName = event.event.name;
+    const data = event.event.data as Record<string, unknown>;
+
     // Non-think events end the thinking phase
-    if (event.event.type !== 'think') {
+    if (eventName !== 'think') {
       const state = this.activityStates.get(activityId);
       if (state?.thinkingStart) {
         await this.endThinking(chatId, activityId);
@@ -356,7 +416,7 @@ export class Bridge {
     }
 
     // Non-content_delta events clear expressing phase
-    if (event.event.type !== 'content_delta') {
+    if (eventName !== 'content_delta') {
       const state = this.activityStates.get(activityId);
       if (state?.expressingStart !== undefined) {
         delete state.expressingStart;
@@ -364,7 +424,7 @@ export class Bridge {
     }
 
     // Handle typing indicator: refresh for non-complete, release for complete
-    if (event.event.type === 'complete') {
+    if (eventName === 'complete') {
       const state = this.activityStates.get(activityId);
       if (state?.processingMessageId !== undefined) {
         await this.cloud.releaseTypingIndicator(chatId, target.senderId, state.processingMessageId);
@@ -378,9 +438,9 @@ export class Bridge {
       }
     }
 
-    switch (event.event.type) {
+    switch (eventName) {
       case 'think': {
-        if (!chatId) return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
         let state = this.activityStates.get(activityId);
         if (!state) {
           state = {};
@@ -396,14 +456,14 @@ export class Bridge {
             }
           }
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'content_delta': {
-        if (!chatId) return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
         // content_delta is only emitted in streaming mode — forward only on streaming platforms
         if (this.cloud!.streamCapability() === StreamCapability.NonStreaming) {
-          return { kind: 'acknowledge' };
+          return acknowledge();
         }
         let state = this.activityStates.get(activityId);
         if (!state) {
@@ -418,126 +478,64 @@ export class Bridge {
             log.debug('expressing indicator send failed: %s', err);
           }
         }
-        const payload = event.event.payload as ContentPart;
+        const payload = data.payload as ContentPart;
         await this._sendContentPart(chatId, target.senderId, activityId, payload);
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'content_part': {
-        if (!chatId) return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
         // content_part is emitted in non-streaming mode — forward only if verbose
         if (this.verbose) {
-          const payload = event.event.payload as ContentPart;
+          const payload = data.payload as ContentPart;
           await this._sendContentPart(chatId, target.senderId, activityId, payload);
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'tool_result': {
-        if (!chatId) return { kind: 'acknowledge' };
-        const payload = event.event;
-        if (payload.toolName === 'send_file') {
-          for (const part of payload.parts) {
+        if (!chatId) return acknowledge();
+        if (data.toolName === 'send_file') {
+          for (const part of (data.parts as ContentPart[])) {
             await this._sendContentPart(chatId, target.senderId, activityId, part);
           }
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'complete': {
-        const payload = event.event;
-        for (const part of payload.assistantReply) {
+        for (const part of (data.assistantReply as ContentPart[])) {
           await this._sendContentPart(chatId, target.senderId, activityId, part);
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'notify': {
-        if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: event.event.message });
-        return { kind: 'acknowledge' };
-      }
-
-      case 'action_request': {
-        if (!chatId) return { kind: 'acknowledge' };
-        const key = this.targetKey(chatId, target.senderId);
-        const pq = this.ensureQueue(key);
-        const item = this.createPendingItem(chatId, target.senderId, 'action_request', event.event);
-        const pendingPromise = new Promise<XacppResponse>((resolve) => { item.resolve = resolve; });
-        if (!pq.active) {
-          pq.active = item;
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: this.formatActionMessage(event.event) });
-          } catch {
-            pq.active = null;
-            item.resolve({ kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' });
-          }
-        } else {
-          pq.queue.push(item);
-        }
-        return pendingPromise;
-      }
-
-      case 'question': {
-        if (!chatId) return { kind: 'acknowledge' };
-        const key = this.targetKey(chatId, target.senderId);
-        const pq = this.ensureQueue(key);
-        const item = this.createPendingItem(chatId, target.senderId, 'question', event.event);
-        const pendingPromise = new Promise<XacppResponse>((resolve) => { item.resolve = resolve; });
-        if (!pq.active) {
-          pq.active = item;
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: this.formatQuestionMessage(event.event) });
-          } catch {
-            pq.active = null;
-            item.resolve({ kind: 'error', code: 'send_failed', message: 'failed to forward question to cloud' });
-          }
-        } else {
-          pq.queue.push(item);
-        }
-        return pendingPromise;
-      }
-
-      case 'sensitive_info_operation': {
-        if (!chatId) return { kind: 'acknowledge' };
-        const key = this.targetKey(chatId, target.senderId);
-        const pq = this.ensureQueue(key);
-        const item = this.createPendingItem(chatId, target.senderId, 'sensitive_info_operation', event.event);
-        const pendingPromise = new Promise<XacppResponse>((resolve) => { item.resolve = resolve; });
-        if (!pq.active) {
-          pq.active = item;
-          try {
-            await this.cloud.send(chatId, { type: 'text', text: this.formatSensitiveInfoMessage(event.event) });
-          } catch {
-            pq.active = null;
-            item.resolve({ kind: 'error', code: 'send_failed', message: 'failed to forward sensitive_info_operation to cloud' });
-          }
-        } else {
-          pq.queue.push(item);
-        }
-        return pendingPromise;
+        if (!chatId) return acknowledge();
+        await this.cloud.send(chatId, { type: 'text', text: (data as unknown as NotifyPayload).message });
+        return acknowledge();
       }
 
       case 'info': {
-        if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('ℹ️', event.event) });
-        return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('ℹ️', data as { title: string; content: string }) });
+        return acknowledge();
       }
 
       case 'warn': {
-        if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('⚠️', event.event) });
-        return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('⚠️', data as { title: string; content: string }) });
+        return acknowledge();
       }
 
       case 'error': {
-        if (!chatId) return { kind: 'acknowledge' };
-        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('❌', event.event) });
-        return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
+        await this.cloud.send(chatId, { type: 'text', text: this.formatTraceable('❌', data as { title: string; content: string }) });
+        return acknowledge();
       }
 
       case 'tool_use': {
-        if (!chatId) return { kind: 'acknowledge' };
+        if (!chatId) return acknowledge();
         let state = this.activityStates.get(activityId);
         if (!state) {
           state = {};
@@ -553,7 +551,7 @@ export class Bridge {
             }
           }
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
       case 'pair_complete': {
@@ -564,11 +562,19 @@ export class Bridge {
             // Elapsed time available for future use: (Date.now() - start) / 1000
           }
         }
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
 
+      case 'think_start':
+      case 'think_end':
+      case 'content_start':
+      case 'content_end':
+      case 'think_part':
+      case 'start':
+        return acknowledge();
+
       default: {
-        return { kind: 'acknowledge' };
+        return acknowledge();
       }
     }
   }
@@ -577,9 +583,9 @@ export class Bridge {
   private async sendNextPending(item: PendingItem): Promise<void> {
     let message: string;
     switch (item.type) {
-      case 'action_request': message = this.formatActionMessage(item.eventPayload as ActionRequestEvent); break;
-      case 'question': message = this.formatQuestionMessage(item.eventPayload as QuestionEvent); break;
-      case 'sensitive_info_operation': message = this.formatSensitiveInfoMessage(item.eventPayload as SensitiveInfoOperationEvent); break;
+      case 'action_request': message = this.formatActionMessage(item.eventPayload as ActionRequestPayload); break;
+      case 'question': message = this.formatQuestionMessage(item.eventPayload as QuestionPayload); break;
+      case 'sensitive_info_operation': message = this.formatSensitiveInfoMessage(item.eventPayload as SensitiveInfoOperationPayload); break;
     }
     await this.cloud!.send(item.chatId, { type: 'text', text: message });
   }
@@ -596,7 +602,7 @@ export class Bridge {
           pq.active = next;
           this.sendNextPending(next).catch(() => {
             pq.active = null;
-            next.resolve({ kind: 'error', code: 'send_failed', message: 'failed to forward queued event to cloud' });
+            next.resolve(errorResponse('send_failed', 'failed to forward queued event to cloud'));
           });
         } else {
           this.pendingQueues.delete(key);
@@ -647,14 +653,6 @@ export class Bridge {
 
         // ── Text messages: parse and dispatch by kind ─────────────────────
         if (msg.content.type === 'text' && msg.fallback) {
-          const mediaKey = this.targetKey(chatId, senderId);
-          let buffered = this.pendingMediaByTarget.get(mediaKey);
-          if (!buffered) {
-            buffered = [];
-            this.pendingMediaByTarget.set(mediaKey, buffered);
-          }
-          buffered.push({ ...msg.content });
-          log.debug('← cloud recv: fallback (chatId=%s, buffered=%d)', chatId, buffered.length);
           continue;
         }
 
@@ -663,21 +661,19 @@ export class Bridge {
           switch (parsed.kind) {
             case 'new': {
               this.unbindActivity(chatId, senderId);
-              const createResponse = await this.session.requestCommand({
-                new_activity: { title: '' },
-              });
-              if (createResponse.kind === 'activity_ready') {
-                const newActivityId = createResponse.activity;
-                this.bindActivity(chatId, senderId, newActivityId);
-                if (parsed.prompt) {
-                  await this.session.requestCommand({
-                    invoke_activity: {
-                      activity: newActivityId,
-                      messages: [{ type: 'text', text: parsed.prompt }],
-                    },
-                  });
-                  await this.setTypingIndicatorIfNeeded(chatId, senderId, newActivityId, msg.id);
+              if (parsed.prompt) {
+                const createResponse = await this.session.requestCommand(genericCommand("new_activity", { title: '' }));
+                if (createResponse.kind === 'generic' && createResponse.name === 'activity_ready') {
+                  const activityId = (createResponse.data as { activity: string }).activity;
+                  this.bindActivity(chatId, senderId, activityId);
+                  await this.session.requestCommand(genericCommand("invoke_activity", {
+                    activity: activityId,
+                    messages: [{ type: 'text', text: parsed.prompt }],
+                  }));
+                  await this.setTypingIndicatorIfNeeded(chatId, senderId, activityId, msg.id);
                 }
+              } else {
+                await this.session.requestCommand(genericCommand("new_activity", { title: '' }));
               }
               continue;
             }
@@ -685,36 +681,32 @@ export class Bridge {
             case 'compact': {
               let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
-                const lastResponse = await this.session.requestCommand('last_activity');
-                if (lastResponse.kind === 'activity_ready') {
-                  activityId = lastResponse.activity;
+                const lastResponse = await this.session.requestCommand(genericCommand("last_activity", {}));
+                if (lastResponse.kind === 'generic' && lastResponse.name === 'activity_ready') {
+                  activityId = (lastResponse.data as { activity: string }).activity;
                   this.bindActivity(chatId, senderId, activityId);
                 } else {
                   await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
                   continue;
                 }
               }
-              await this.session.requestCommand({
-                compact_activity: { activity: activityId },
-              });
+              await this.session.requestCommand(genericCommand("compact_activity", { activity: activityId }));
               continue;
             }
 
             case 'cancel': {
               let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
-                const lastResponse = await this.session.requestCommand('last_activity');
-                if (lastResponse.kind === 'activity_ready') {
-                  activityId = lastResponse.activity;
+                const lastResponse = await this.session.requestCommand(genericCommand("last_activity", {}));
+                if (lastResponse.kind === 'generic' && lastResponse.name === 'activity_ready') {
+                  activityId = (lastResponse.data as { activity: string }).activity;
                   this.bindActivity(chatId, senderId, activityId);
                 } else {
                   await this.cloud.send(chatId, { type: 'text', text: '当前暂无活动中的对话' });
                   continue;
                 }
               }
-              await this.session.requestCommand({
-                cancel_activity: { activity: activityId },
-              });
+              await this.session.requestCommand(genericCommand("cancel_activity", { activity: activityId }));
               continue;
             }
 
@@ -738,7 +730,7 @@ export class Bridge {
                   if (parsed.text.trim().toLowerCase() === 'c') {
                     const actId = this.getActivityForUser(chatId, senderId);
                     if (actId) {
-                      await this.session.requestCommand({ cancel_activity: { activity: actId } });
+                      await this.session.requestCommand(genericCommand("cancel_activity", { activity: actId }));
                       await this.cloud.send(chatId, { type: 'text', text: '✅ 已终止当前任务，可下达新的指令' });
                     }
                   }
@@ -751,15 +743,13 @@ export class Bridge {
               // ── Original invoke logic ──
               let activityId = this.getActivityForUser(chatId, senderId);
               if (!activityId) {
-                const lastResponse = await this.session.requestCommand('last_activity');
-                if (lastResponse.kind === 'activity_ready') {
-                  activityId = lastResponse.activity;
+                const lastResponse = await this.session.requestCommand(genericCommand("last_activity", {}));
+                if (lastResponse.kind === 'generic' && lastResponse.name === 'activity_ready') {
+                  activityId = (lastResponse.data as { activity: string }).activity;
                 } else {
-                  const createResponse = await this.session.requestCommand({
-                    new_activity: { title: '' },
-                  });
-                  if (createResponse.kind === 'activity_ready') {
-                    activityId = createResponse.activity;
+                  const createResponse = await this.session.requestCommand(genericCommand("new_activity", { title: '' }));
+                  if (createResponse.kind === 'generic' && createResponse.name === 'activity_ready') {
+                    activityId = (createResponse.data as { activity: string }).activity;
                   } else {
                     continue;
                   }
@@ -771,12 +761,10 @@ export class Bridge {
               if (bufferedMedia.length > 0) {
                 this.pendingMediaByTarget.delete(invokeKey);
               }
-              await this.session.requestCommand({
-                invoke_activity: {
-                  activity: activityId,
-                  messages: [...bufferedMedia, { type: 'text', text: parsed.text }],
-                },
-              });
+              await this.session.requestCommand(genericCommand("invoke_activity", {
+                activity: activityId,
+                messages: [...bufferedMedia, { type: 'text', text: parsed.text }],
+              }));
               await this.setTypingIndicatorIfNeeded(chatId, senderId, activityId, msg.id);
               continue;
             }
@@ -821,10 +809,10 @@ export class Bridge {
     this.runPromise = null;
     for (const [, pq] of this.pendingQueues) {
       if (pq.active) {
-        pq.active.resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
+        pq.active.resolve(errorResponse('cancelled', 'Bridge closing'));
       }
       for (const item of pq.queue) {
-        item.resolve({ kind: 'error', code: 'cancelled', message: 'Bridge closing' });
+        item.resolve(errorResponse('cancelled', 'Bridge closing'));
       }
     }
     this.pendingQueues.clear();

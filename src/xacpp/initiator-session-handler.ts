@@ -1,5 +1,5 @@
-import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler, ContentPart } from 'xacpp';
-import type { XacppSession } from 'xacpp';
+import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler, ContentPart, XacppEvent, XacppSession } from 'xacpp';
+import { acknowledge, genericResponse, genericCommand, commandName, newEvent } from 'xacpp';
 import { StdinRouter } from './stdin-router.js';
 import { createLogger } from '../core/logger.js';
 import { statSync } from 'node:fs';
@@ -84,17 +84,20 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
   }
 
   async onCommand(command: XacppCommand): Promise<XacppResponse> {
-    if (typeof command === 'object' && 'new_activity' in command) {
+    const name = commandName(command);
+
+    if (name === 'new_activity') {
       // Responder requests a new activity — generate an ID.
       this.activityId = crypto.randomUUID();
       log.info('activity created: %s', this.activityId);
       log.info('new_activity → activity_ready, agent=chat');
-      return { kind: 'activity_ready', activity: this.activityId, agent: 'chat' };
+      return genericResponse("activity_ready", { activity: this.activityId, agent: 'chat' });
     }
 
-    if (typeof command === 'object' && 'invoke_activity' in command) {
+    if (name === 'invoke_activity') {
       // Responder forwards a cloud message — print it to terminal.
-      const { messages } = command.invoke_activity;
+      const args = (command as { generic: { arguments: { messages: ContentPart[] } } }).generic.arguments;
+      const { messages } = args;
       for (const part of messages) {
         if (part.type === 'text') {
           log.info('invoke_activity [act-%s][> IN]: %s', this.activityId ?? 'none', part.text);
@@ -104,22 +107,22 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
           log.info('invoke_activity [act-%s][> IN]: [%s: %s] mime=%s', this.activityId ?? 'none', part.type, location, src.mimeType || 'unknown');
         }
       }
-      return { kind: 'acknowledge' };
+      return acknowledge();
     }
 
-    if (typeof command === 'object' && 'compact_activity' in command) {
-      const { activity } = command.compact_activity;
-      log.info('compact_activity [act-%s]', activity);
-      return { kind: 'acknowledge' };
+    if (name === 'compact_activity') {
+      const args = (command as { generic: { arguments: { activity: string } } }).generic.arguments;
+      log.info('compact_activity [act-%s]', args.activity);
+      return acknowledge();
     }
 
-    if (typeof command === 'object' && 'cancel_activity' in command) {
-      const { activity } = command.cancel_activity;
-      log.info('cancel_activity [act-%s]', activity);
-      return { kind: 'acknowledge' };
+    if (name === 'cancel_activity') {
+      const args = (command as { generic: { arguments: { activity: string } } }).generic.arguments;
+      log.info('cancel_activity [act-%s]', args.activity);
+      return acknowledge();
     }
 
-    if (command === 'last_activity') {
+    if (name === 'last_activity') {
       log.info('received last_activity command');
       log.info('last_activity → received');
       this.router.intercept();
@@ -134,26 +137,25 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       if (!input) {
         log.info('no activity ID provided, returning activity_not_found');
         log.info('last_activity → activity_not_found');
-        return { kind: 'activity_not_found' };
+        return genericResponse("activity_not_found", null);
       }
       this.activityId = input;
       log.info('resuming activity: %s', input);
       log.info('last_activity → activity_ready, agent=chat');
-      return { kind: 'activity_ready', activity: input, agent: 'chat' };
+      return genericResponse("activity_ready", { activity: input, agent: 'chat' });
     }
 
-    const cmdStr = typeof command === 'string' ? command : (Object.keys(command)[0] ?? 'object');
-    log.warn('unknown command: %s → acknowledge', cmdStr);
-    return { kind: 'acknowledge' };
+    log.warn('unknown command: %s → acknowledge', name);
+    return acknowledge();
   }
 
   async onEvent(_event: XacppActivityEvent): Promise<XacppResponse> {
     // Initiator does not receive events — it sends them via sendReply().
-    return { kind: 'acknowledge' };
+    return acknowledge();
   }
 
-  private async sendEvent(session: XacppSession, event: import('xacpp').XacppEvent): Promise<XacppResponse> {
-    if (!this.activityId) return { kind: 'acknowledge' };
+  private async sendEvent(session: XacppSession, event: XacppEvent): Promise<XacppResponse> {
+    if (!this.activityId) return acknowledge();
     return session.requestEvent({ activity: this.activityId, event });
   }
 
@@ -171,17 +173,17 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       if (parsed.text) assistantReply.push({ type: 'text', text: parsed.text });
       log.info('complete [act-%s]', this.activityId ?? 'none');
       if (this.activityId) {
-        await this.sendEvent(session, { type: 'complete', assistantReply });
+        await this.sendEvent(session, newEvent('complete', { assistantReply }));
       } else {
         // No activity — fall back to message command
         if (parsed.text) {
-          await session.requestCommand({ message: { content: [{ type: 'text', text: parsed.text }] } });
+          await session.requestCommand(genericCommand("message", { content: [{ type: 'text', text: parsed.text }] }));
         }
       }
       return;
     }
 
-    // ── /action: simulate action_request event ──
+    // ── /action: simulate action_request command ──
     if (parsed.kind === 'action') {
       if (!this.activityId) {
         log.warn('no active activity, ignoring /action');
@@ -189,8 +191,8 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       }
       const requestId = crypto.randomUUID();
       log.info('action_request [act-%s] tool=%s desc=%s', this.activityId, parsed.toolName, parsed.description);
-      const response = await this.sendEvent(session, {
-        type: 'action_request',
+      const response = await session.requestCommand(genericCommand("action_request", {
+        activity: this.activityId,
         requestId,
         toolName: parsed.toolName,
         arguments: '',
@@ -198,17 +200,18 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         description: parsed.description,
         alert: 'info',
         intent: parsed.description,
-      });
-      if (response.kind === 'action') {
-        log.info('action_response [act-%s] req=%s result=%s%s', this.activityId, response.requestId, response.type,
-          response.type === 'reject' ? ` reason=${response.reason}` : '');
+      }));
+      if (response.kind === 'generic' && response.name === 'action') {
+        const data = response.data as { requestId: string; type: string; reason?: string };
+        log.info('action_response [act-%s] req=%s result=%s%s', this.activityId, data.requestId, data.type,
+          data.type === 'reject' ? ` reason=${data.reason}` : '');
       } else {
         log.info('action_response [act-%s] %s', this.activityId ?? 'none', response.kind);
       }
       return;
     }
 
-    // ── /question: simulate question event ──
+    // ── /question: simulate question command ──
     if (parsed.kind === 'question') {
       if (!this.activityId) {
         log.warn('no active activity, ignoring /question');
@@ -216,16 +219,17 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       }
       const requestId = crypto.randomUUID();
       log.info('question [act-%s] q=%s options=%s', this.activityId, parsed.question, parsed.options?.join(',') ?? '');
-      const response = await this.sendEvent(session, {
-        type: 'question',
+      const response = await session.requestCommand(genericCommand("question", {
+        activity: this.activityId,
         requestId,
         question: parsed.question,
         options: parsed.options ?? [],
-      });
-      if (response.kind === 'question') {
+      }));
+      if (response.kind === 'generic' && response.name === 'question') {
+        const data = response.data as { requestId: string; type: string; content?: string };
         log.info('question_response [act-%s] req=%s type=%s content=%s',
-            this.activityId, response.requestId, response.type,
-            response.type === 'answer' ? response.content : '(skip)');
+            this.activityId, data.requestId, data.type,
+            data.type === 'answer' ? data.content : '(skip)');
       } else {
         log.info('question_response [act-%s] %s', this.activityId ?? 'none', response.kind);
       }
@@ -245,10 +249,10 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
     // ── Send ──────────────────────────────────────────────────────────
     if (this.activityId) {
       // Scenario 2: has activity → requestEvent
-      await this.sendEvent(session, { type: 'content_part', round: '', pair: '', payload: part });
+      await this.sendEvent(session, newEvent('content_part', { round: '', pair: '', payload: part }));
     } else {
       // Scenario 1: no activity → message command
-      await session.requestCommand({ message: { content: [part] } });
+      await session.requestCommand(genericCommand("message", { content: [part] }));
     }
   }
 }

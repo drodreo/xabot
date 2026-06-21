@@ -171,71 +171,65 @@ export class FeishuClient implements PlatformClient {
     return messageId(result.data.message_id);
   }
 
-  messages(): AsyncIterable<Message> {
-    return {
-      [Symbol.asyncIterator]: () => {
-        return {
-          next: async (): Promise<IteratorResult<Message>> => {
-            // If the connection was closed, stop the iterator.
-            if (this.#abortCtrl.signal.aborted) {
-              return { done: true, value: undefined };
+  async *messages(): AsyncIterable<Message> {
+    while (!this.#abortCtrl.signal.aborted) {
+      let event: FeishuMessageEvent | undefined = this.messageBuffer.shift();
+
+      if (!event) {
+        event = await new Promise<FeishuMessageEvent>((resolve) => {
+          this.messageResolve = resolve;
+        });
+      }
+
+      if (this.#abortCtrl.signal.aborted) break;
+
+      // 消息新鲜度检查：超过 3 分钟的消息视为过期，跳过
+      const ct = event.message.create_time;
+      if (ct) {
+        const ageMs = Date.now() - Number(ct) * 1000;
+        if (ageMs > 3 * 60 * 1000) {
+          log.info('dropping stale message: age=%dms, msg_id=%s', ageMs, event.message.message_id);
+          continue;
+        }
+      }
+
+      const msg = toStandardMessage(event);
+      const content = msg.content;
+      if (content.type !== 'text' && content.source && !content.source.localUri) {
+        if (content.source.remoteUrl) {
+          const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${content.source.remoteUrl.replace(/\W/g, '_').slice(0, 40)}`;
+          try {
+            const resourceType = content.type === 'image' ? 'image' : 'file';
+            await downloadMessageResource(this.httpClient, msg.id as string, content.source.remoteUrl, resourceType, tmpPath);
+            const fileNameHint = content.type === 'file' ? content.name : undefined;
+            const meta = await saveTemp(tmpPath, fileNameHint);
+            if (!meta.mimeType) {
+              throw new Error(`${content.type}接收失败：无法识别文件类型`);
             }
+            const enrichedSource = {
+              ...content.source,
+              localUri: meta.localUri,
+              sha256: meta.sha256,
+              sizeBytes: meta.sizeBytes,
+              mimeType: meta.mimeType,
+              requireOrganized: true,
+            };
+            msg.content = { ...content, source: enrichedSource };
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            log.warn('download media failed: %s', reason);
+            msg.content = { type: 'text', text: `[${content.type}接收失败：${reason}]` };
+            msg.fallback = true;
+          }
+        } else {
+          log.warn('media has no remoteUrl: type=%s', content.type);
+          msg.content = { type: 'text', text: `[${content.type}接收失败：缺少下载地址]` };
+          msg.fallback = true;
+        }
+      }
 
-            // Wait for the next incoming Feishu event.
-            // If the buffer has events, consume them first (FIFO).
-            let event: FeishuMessageEvent | undefined = this.messageBuffer.shift();
-
-            if (!event) {
-              event = await new Promise<FeishuMessageEvent>((resolve) => {
-                this.messageResolve = resolve;
-              });
-            }
-
-            // If the abort signal fired while we were waiting, stop.
-            if (this.#abortCtrl.signal.aborted) {
-              return { done: true, value: undefined };
-            }
-
-            const msg = toStandardMessage(event);
-            const content = msg.content;
-            if (content.type !== 'text' && content.source && !content.source.localUri) {
-              if (content.source.remoteUrl) {
-                const tmpPath = `${tmpdir()}/xabot_${randomUUID()}_${content.source.remoteUrl.replace(/\W/g, '_').slice(0, 40)}`;
-                try {
-                  const resourceType = content.type === 'image' ? 'image' : 'file';
-                  await downloadMessageResource(this.httpClient, msg.id as string, content.source.remoteUrl, resourceType, tmpPath);
-                  const fileNameHint = content.type === 'file' ? content.name : undefined;
-                  const meta = await saveTemp(tmpPath, fileNameHint);
-                  if (!meta.mimeType) {
-                    throw new Error(`${content.type}接收失败：无法识别文件类型`);
-                  }
-                  const enrichedSource = {
-                    ...content.source,
-                    localUri: meta.localUri,
-                    sha256: meta.sha256,
-                    sizeBytes: meta.sizeBytes,
-                    mimeType: meta.mimeType,
-                    requireOrganized: true,
-                  };
-                  msg.content = { ...content, source: enrichedSource };
-                } catch (err) {
-                  const reason = err instanceof Error ? err.message : String(err);
-                  log.warn('download media failed: %s', reason);
-                  msg.content = { type: 'text', text: `[${content.type}接收失败：${reason}]` };
-                  msg.fallback = true;
-                }
-              } else {
-                log.warn('media has no remoteUrl: type=%s', content.type);
-                msg.content = { type: 'text', text: `[${content.type}接收失败：缺少下载地址]` };
-                msg.fallback = true;
-              }
-            }
-
-            return { done: false, value: msg };
-          },
-        };
-      },
-    };
+      yield msg;
+    }
   }
 
   streamCapability(): StreamCapability {

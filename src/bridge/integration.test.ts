@@ -19,6 +19,7 @@ import {
   type Message,
 } from '../core/types.js';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
+import { acknowledge, genericCommand, genericResponse } from 'xacpp';
 
 
 // ─── ManualIter ───────────────────────────────────────────────────────────────
@@ -138,9 +139,9 @@ describe('Bridge integration', () => {
   it('L1: cloud text message → last_activity not found → new_activity + invoke_activity', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(makeMessage(chatA, 'hello'));
     cloudMessagesIter.stop();
@@ -148,19 +149,19 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-1', messages: [{ type: 'text', text: 'hello' }] } },
     });
   });
 
   it('L1: cloud image message → image ContentPart', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-img'),
@@ -175,10 +176,10 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages[0].type).toBe('image');
     expect(messages[0].source.localUri).toBe('/tmp/xabot_img.png');
     expect(messages[0].source.sha256).toBe('deadbeef0000');
@@ -190,7 +191,7 @@ describe('Bridge integration', () => {
   it('L1: failed new_activity → message skipped', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
       .mockResolvedValueOnce({ kind: 'error', code: 'rejected', message: 'no' });
 
     cloudMessagesIter.push(makeMessage(chatA, 'hello'));
@@ -205,8 +206,8 @@ describe('Bridge integration', () => {
   it('L1: last_activity returns activity_ready → skips new_activity', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-last', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(makeMessage(chatA, 'hello'));
     cloudMessagesIter.stop();
@@ -214,12 +215,12 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
-      invoke_activity: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] } },
     });
     const newActivityCalls = sessionRequestCommand.mock.calls.filter(
-      (call) => typeof call[0] === 'object' && 'new_activity' in call[0],
+      (call) => typeof call[0] === 'object' && 'generic' in call[0] && (call[0] as any).generic.name === 'new_activity',
     );
     expect(newActivityCalls).toHaveLength(0);
   });
@@ -233,8 +234,8 @@ describe('Bridge integration', () => {
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
       event: {
-        type: 'content_delta', round: 'r1', pair: 'p1',
-        payload: { type: 'text', text: 'streaming text' },
+        name: 'content_delta', data: { round: 'r1', pair: 'p1',
+        payload: { type: 'text', text: 'streaming text' } },
       },
     });
 
@@ -276,13 +277,13 @@ describe('Bridge integration', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: {
-        type: 'content_part', round: 'r1', pair: 'p1',
+      activity: 'act-1', event: {
+        name: 'content_part', data: { round: 'r1', pair: 'p1',
         payload: {
           type: 'image',
           source: { remoteUrl: 'https://example.com/gen.png', localUri: '', mimeType: 'image/png', sizeBytes: 50 },
         },
+      },
       },
     });
 
@@ -324,14 +325,13 @@ describe('Bridge integration', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     const response = await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: {
-        type: 'complete',
-        assistantReply: [{ type: 'text', text: 'final answer' }],
+      activity: 'act-1', event: {
+        name: 'complete',
+        data: { assistantReply: [{ type: 'text', text: 'final answer' }] },
       },
     });
 
-    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(response).toEqual(acknowledge());
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
   });
 
@@ -340,8 +340,7 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { type: 'notify', requestId: 'n1', message: 'notification' },
+      activity: 'act-1', event: { name: 'notify', data: { requestId: 'n1', message: 'notification' } },
     });
 
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'notification' });
@@ -353,9 +352,9 @@ describe('Bridge integration', () => {
     const chatA = channelId('chat-a');
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-a', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push(makeMessage(chatA, 'first'));
     cloudMessagesIter.push(makeMessage(chatA, 'second'));
@@ -364,13 +363,13 @@ describe('Bridge integration', () => {
 
     // last_activity + new_activity for first msg, invoke for both
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
 
     // All outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
       activity: 'act-a',
-      event: { type: 'content_delta', round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } } },
     });
 
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply' });
@@ -380,27 +379,24 @@ describe('Bridge integration', () => {
 
   it('L4: action_request blocks until resolvePending', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
-    const eventPromise = bridge.handleEvent('act-1', {
+    const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-1',
-        toolName: 'bash',
-        arguments: '{"command":"rm -rf /"}',
-        actionId: 'action-1',
-        description: 'Delete everything',
-        alert: 'critical',
-      },
-    });
+      requestId: 'req-1',
+      toolName: 'bash',
+      arguments: '{"command":"rm -rf /"}',
+      actionId: 'action-1',
+      description: 'Delete everything',
+      alert: 'critical',
+    } } });
 
     // Should have sent notification to cloud
     await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
 
     // Resolve the pending
-    bridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'reject', reason: 'dangerous' });
+    bridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'dangerous' }));
 
-    const response = await eventPromise;
-    expect(response).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: 'dangerous' });
+    const response = await cmdPromise;
+    expect(response).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'dangerous' }));
   });
 
   // ── L5: cloud.send failure cleans up pending ───────────────────────────
@@ -409,18 +405,15 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     cloudSendMock.mockRejectedValueOnce(new Error('network down'));
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await bridge.handleCommand({ generic: { name: 'action_request', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-fail',
-        toolName: 'tool',
-        arguments: '{}',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-fail',
+      toolName: 'tool',
+      arguments: '{}',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    } } });
 
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' });
 
@@ -433,14 +426,11 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     cloudSendMock.mockRejectedValueOnce(new Error('timeout'));
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await bridge.handleCommand({ generic: { name: 'sensitive_info_operation', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'sensitive_info_operation',
-        requestId: 'req-si',
-        operation: { type: 'collect', items: [{ key: 'API_KEY', displayText: 'API Key', hint: 'enter', siType: 'secret' }] },
-      },
-    });
+      requestId: 'req-si',
+      operation: { type: 'collect', items: [{ key: 'API_KEY', displayText: 'API Key', hint: 'enter', siType: 'secret' }] },
+    } } });
 
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward sensitive_info_operation to cloud' });
   });
@@ -450,25 +440,22 @@ describe('Bridge integration', () => {
   it('close() clears mappings and rejects pending', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     // Start an action_request (will be pending)
-    const eventPromise = bridge.handleEvent('act-1', {
+    const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-close',
-        toolName: 'tool',
-        arguments: '{}',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-close',
+      toolName: 'tool',
+      arguments: '{}',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    } } });
 
-    // Wait for action_request to be processed (async handleEvent)
+    // Wait for action_request to be processed (async handleCommand)
     await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
 
     await bridge.close();
 
-    const response = await eventPromise;
+    const response = await cmdPromise;
     expect(response.kind).toBe('error');
     expect(cloudCloseMock).toHaveBeenCalled();
     expect(transportDisconnectMock).toHaveBeenCalled();
@@ -481,26 +468,23 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     // Agent sends action_request → pending
-    const eventPromise = bridge.handleEvent('act-1', {
+    const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-invoke',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-invoke',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    } } });
 
     // User replies 'y' via cloud message
     cloudMessagesIter.push(makeMessage(chatA, 'y'));
     cloudMessagesIter.stop();
     await bridge.run();
 
-    const response = await eventPromise;
-    expect(response).toEqual({ kind: 'action', requestId: 'req-invoke', type: 'approve' });
+    const response = await cmdPromise;
+    expect(response).toEqual(genericResponse('action', { requestId: 'req-invoke', type: 'approve' }));
   });
 
   it('L6: invoke text with free text rejects action_request', async () => {
@@ -508,18 +492,15 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     // Agent sends action_request → pending
-    const eventPromise = bridge.handleEvent('act-1', {
+    const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-invalid',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-invalid',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    } } });
 
     // Reset cloud send count to isolate this test
     cloudSendMock.mockClear();
@@ -529,30 +510,27 @@ describe('Bridge integration', () => {
     cloudMessagesIter.stop();
     await bridge.run();
 
-    const response = await eventPromise;
-    expect(response).toEqual({ kind: 'action', requestId: 'req-invalid', type: 'reject', reason: '太危险了' });
+    const response = await cmdPromise;
+    expect(response).toEqual(genericResponse('action', { requestId: 'req-invalid', type: 'reject', reason: '太危险了' }));
   });
 
   it('L6: invoke text routes question numeric response', async () => {
     const chatA = channelId('chat-a');
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
-    const eventPromise = bridge.handleEvent('act-1', {
+    const cmdPromise = bridge.handleCommand({ generic: { name: 'question', arguments: {
       activity: 'act-1',
-      event: {
-        type: 'question',
-        requestId: 'req-q',
-        question: 'Pick one',
-        options: ['Red', 'Green', 'Blue'],
-      },
-    });
+      requestId: 'req-q',
+      question: 'Pick one',
+      options: ['Red', 'Green', 'Blue'],
+    } } });
 
     cloudMessagesIter.push(makeMessage(chatA, '2'));
     cloudMessagesIter.stop();
     await bridge.run();
 
-    const response = await eventPromise;
-    expect(response).toEqual({ kind: 'question', requestId: 'req-q', type: 'answer', content: 'Green' });
+    const response = await cmdPromise;
+    expect(response).toEqual(genericResponse('question', { requestId: 'req-q', type: 'answer', content: 'Green' }));
   });
 
   // ── Media buffering ─────────────────────────────────────────────────────
@@ -560,9 +538,9 @@ describe('Bridge integration', () => {
   it('image message buffers, text merge invokes with media first', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-img', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-img', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-img'),
@@ -577,10 +555,10 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages).toHaveLength(2);
     expect(messages[0].type).toBe('image');
     expect(messages[0].source.localUri).toBe('/tmp/xabot_photo.png');
@@ -593,9 +571,9 @@ describe('Bridge integration', () => {
   it('multiple files buffer then merge on text', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-f', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-f', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     for (let i = 0; i < 3; i++) {
       cloudMessagesIter.push({
@@ -612,10 +590,10 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages).toHaveLength(4);
     expect(messages[0].type).toBe('file');
     expect(messages[0].source.localUri).toBe('/tmp/xabot_doc0.pdf');
@@ -638,9 +616,9 @@ describe('Bridge integration', () => {
   it('media buffering is isolated by sender', async () => {
     const chatA = channelId('chat-a');
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-a', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-sender-a'),
@@ -661,17 +639,17 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual({ type: 'text', text: 'hello from b' });
   });
 
   it('media-only messages never invoke', async () => {
     const chatA = channelId('chat-a');
-    sessionRequestCommand.mockResolvedValue({ kind: 'acknowledge' });
+    sessionRequestCommand.mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-only-img'),
@@ -685,7 +663,7 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const invokeCalls = sessionRequestCommand.mock.calls.filter(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCalls).toHaveLength(0);
   });

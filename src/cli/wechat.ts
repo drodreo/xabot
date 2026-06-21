@@ -6,7 +6,8 @@ import { health } from './health.js';
 import { run } from './run.js';
 import { chat } from './chat.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
-import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
+import { XABOT_CAPABILITIES } from '../xacpp/capabilities.js';
+import { XacppPeer, XacppSession, StdioTransport, type EffectiveCapabilities } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
 export function registerWechat(program: Command): void {
   const wechat = program
@@ -58,7 +59,7 @@ export function registerWechat(program: Command): void {
         bridge.markEstablished();
       });
 
-      const peer = new XacppPeer(transport, establishHandler);
+      const peer = new XacppPeer(XABOT_CAPABILITIES, transport, { async onNegotiate(_effective: EffectiveCapabilities) {} }, establishHandler);
       bridge.run();
       await peer.connect();
 
@@ -68,6 +69,7 @@ export function registerWechat(program: Command): void {
   wechat
     .command('chat')
     .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
+    .option('--verbose', 'Enable verbose mode (show thinking/tool indicators)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
     .action(async (opts) => {
       const { logLevel } = wechat.opts();
@@ -85,6 +87,9 @@ export function registerWechat(program: Command): void {
       };
       if (opts.credentials) {
         chatOpts.credentials = opts.credentials;
+      }
+      if (opts.verbose) {
+        chatOpts.verbose = true;
       }
       await chat(undefined, chatOpts);
     });

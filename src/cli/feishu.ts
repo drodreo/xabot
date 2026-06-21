@@ -5,7 +5,8 @@ import { run } from './run.js';
 import { chat, type ChatOptions } from './chat.js';
 import { createLogger, setLevel } from '../core/logger.js';
 import { XabotEstablishHandler } from '../xacpp/establish-handler.js';
-import { XacppPeer, XacppSession, StdioTransport } from 'xacpp';
+import { XABOT_CAPABILITIES } from '../xacpp/capabilities.js';
+import { XacppPeer, XacppSession, StdioTransport, type EffectiveCapabilities } from 'xacpp';
 import { Bridge } from '../bridge/index.js';
 
 const log = createLogger('feishu');
@@ -57,16 +58,20 @@ export function registerFeishu(program: Command): void {
 
       const transport = new StdioTransport(process.stdout, process.stdin);
       const establishHandler = new XabotEstablishHandler();
-      const peer = new XacppPeer(transport, establishHandler);
+      const peer = new XacppPeer(XABOT_CAPABILITIES, transport, { async onNegotiate(effective: EffectiveCapabilities) {
+        log.info('negotiate completed: remote_commands=%d, emit_events=%d', effective.remoteCommands.length, effective.emitEvents.length);
+      } }, establishHandler);
 
       const bridge = new Bridge(transport, { cloud, verbose: verbose ?? false });
       establishHandler.setBridge(bridge);
       bridge.setEstablishHandler(establishHandler);
 
       establishHandler.onEstablished((_t, sessionId, credentials) => {
+        log.info('established: sessionId=%s, credentials=%s', sessionId, credentials);
         const session = new XacppSession(transport, sessionId, credentials);
         bridge.setSession(session);
         bridge.markEstablished();
+        log.info('bridge session set, markEstablished done');
       });
 
       bridge.run();
@@ -79,6 +84,7 @@ export function registerFeishu(program: Command): void {
   feishu
     .command('chat')
     .option('--credentials <credentials>', 'Reuse existing session credentials (skip challenge)')
+    .option('--verbose', 'Enable verbose mode (show thinking/tool indicators)')
     .description('Interactive chat: Establish handshake + bidirectional messaging with Agent')
     .action(async (opts) => {
       const { appId, appSecret, logLevel } = feishu.opts();
@@ -88,6 +94,9 @@ export function registerFeishu(program: Command): void {
       const chatOpts: ChatOptions = {};
       if (opts.credentials) {
         chatOpts.credentials = opts.credentials;
+      }
+      if (opts.verbose) {
+        chatOpts.verbose = true;
       }
       await chat(cloud, chatOpts);
     });

@@ -11,7 +11,8 @@
  */
 
 import type { PlatformClient } from '../core/client.js';
-import { XacppPeer, XacppSession, SocketTransport } from 'xacpp';
+import { XacppPeer, XacppSession, SocketTransport, type EffectiveCapabilities } from 'xacpp';
+import { XABOT_CAPABILITIES } from '../xacpp/capabilities.js';
 import * as net from 'node:net';
 import type { Readable } from 'node:stream';
 import { Bridge } from '../bridge/index.js';
@@ -28,6 +29,8 @@ export interface ChatOptions {
   loginFn?: () => Promise<{ token: string; baseUrl: string }>;
   /** Factory to create a cloud client after login. The returned client replaces the placeholder in Bridge. */
   cloudFactory?: (token: string, baseUrl: string) => Promise<PlatformClient>;
+  /** Enable verbose mode (show thinking/tool indicators). */
+  verbose?: boolean;
 }
 
 /**
@@ -79,7 +82,7 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
     async onEstablish() { throw new Error('Initiator does not accept inbound establish'); },
     async onEstablishConfirm() { throw new Error('Unexpected establish_confirm on Initiator'); },
   };
-  const initiatorPeer = new XacppPeer(initiatorTransport, dummyEstablishHandler);
+  const initiatorPeer = new XacppPeer(XABOT_CAPABILITIES, initiatorTransport, { async onNegotiate(_effective: EffectiveCapabilities) {} }, dummyEstablishHandler);
   const router = new StdinRouter(process.stdin as unknown as Readable);
   const initiatorHandler = new InitiatorSessionHandler(router);
 
@@ -94,9 +97,9 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   const responderTransport = new SocketTransport(await accept);
   log.info('TCP connection accepted');
   const establishHandler = new XabotEstablishHandler();
-  const responderPeer = new XacppPeer(responderTransport, establishHandler);
+  const responderPeer = new XacppPeer(XABOT_CAPABILITIES, responderTransport, { async onNegotiate(_effective: EffectiveCapabilities) {} }, establishHandler);
 
-  const bridge = new Bridge(responderTransport, cloud ? { cloud } : undefined);
+  const bridge = new Bridge(responderTransport, cloud ? { cloud, verbose: options?.verbose ?? false } : { verbose: options?.verbose ?? false });
   establishHandler.setBridge(bridge);
   bridge.setEstablishHandler(establishHandler);
 
@@ -128,6 +131,11 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   log.debug('awaiting Initiator peer connect...');
   await initiatorConnectPromise;
   log.info('Initiator peer connected');
+
+  // ── Step 4b: Negotiate (Initiator → Responder) ─────────────────────────
+  log.debug('initiating negotiate...');
+  await initiatorPeer.negotiate();
+  log.info('Negotiate completed');
 
   // ── Step 5: Establish (challenge or credentials) ───────────────────────
 

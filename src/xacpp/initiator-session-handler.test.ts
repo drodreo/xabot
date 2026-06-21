@@ -19,11 +19,11 @@ describe('InitiatorSessionHandler', () => {
     const handler = new InitiatorSessionHandler(router);
     router.start();
 
-    const responsePromise = handler.onCommand('last_activity');
+    const responsePromise = handler.onCommand({ generic: { name: 'last_activity', arguments: {} } });
     await pushLine(stdin, 'my-activity-id');
 
     const response = await responsePromise;
-    expect(response).toEqual({ kind: 'activity_ready', activity: 'my-activity-id', agent: 'chat' });
+    expect(response).toEqual({ kind: 'generic', name: 'activity_ready', data: { activity: 'my-activity-id', agent: 'chat' } });
 
     router.close();
   });
@@ -34,11 +34,11 @@ describe('InitiatorSessionHandler', () => {
     const handler = new InitiatorSessionHandler(router);
     router.start();
 
-    const responsePromise = handler.onCommand('last_activity');
+    const responsePromise = handler.onCommand({ generic: { name: 'last_activity', arguments: {} } });
     await pushLine(stdin, '   ');
 
     const response = await responsePromise;
-    expect(response).toEqual({ kind: 'activity_not_found' });
+    expect(response).toEqual({ kind: 'generic', name: 'activity_not_found', data: null });
 
     router.close();
   });
@@ -46,15 +46,15 @@ describe('InitiatorSessionHandler', () => {
   it('compact_activity: returns acknowledge', async () => {
     const handler = new InitiatorSessionHandler(new StdinRouter(fakeStdin()));
 
-    const response = await handler.onCommand({ compact_activity: { activity: 'act-1' } });
-    expect(response).toEqual({ kind: 'acknowledge' });
+    const response = await handler.onCommand({ generic: { name: 'compact_activity', arguments: { activity: 'act-1' } } });
+    expect(response).toEqual({ kind: 'generic', name: 'acknowledge', data: null });
   });
 
   it('cancel_activity: returns acknowledge', async () => {
     const handler = new InitiatorSessionHandler(new StdinRouter(fakeStdin()));
 
-    const response = await handler.onCommand({ cancel_activity: { activity: 'act-2' } });
-    expect(response).toEqual({ kind: 'acknowledge' });
+    const response = await handler.onCommand({ generic: { name: 'cancel_activity', arguments: { activity: 'act-2' } } });
+    expect(response).toEqual({ kind: 'generic', name: 'acknowledge', data: null });
   });
 
   it('last_activity: intercept before prompt, release after response', async () => {
@@ -65,7 +65,7 @@ describe('InitiatorSessionHandler', () => {
     const handler = new InitiatorSessionHandler(router);
     router.start();
 
-    const responsePromise = handler.onCommand('last_activity');
+    const responsePromise = handler.onCommand({ generic: { name: 'last_activity', arguments: {} } });
     expect(interceptSpy).toHaveBeenCalledTimes(1);
 
     await pushLine(stdin, 'some-id');

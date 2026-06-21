@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bridge } from './index.js';
 import { channelId, messageId, userId, type ChannelId, type Message } from '../core/types.js';
+import { acknowledge, genericCommand, genericResponse } from 'xacpp';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,7 +62,7 @@ function mockTransport(): XacppTransport {
   return {
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
-    send: vi.fn().mockResolvedValue({ kind: 'acknowledge' }),
+    send: vi.fn().mockResolvedValue(acknowledge()),
     onRequest: vi.fn(),
   } as unknown as XacppTransport;
 }
@@ -141,9 +142,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'hello agent'));
     cloudMessagesIter.stop();
@@ -151,10 +152,10 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'hello agent' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-1', messages: [{ type: 'text', text: 'hello agent' }] } },
     });
   });
 
@@ -164,9 +165,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'first'));
     cloudMessagesIter.push(msg(chatA, 'second'));
@@ -175,10 +176,10 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
-      invoke_activity: { activity: 'act-1', messages: [{ type: 'text', text: 'second' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-1', messages: [{ type: 'text', text: 'second' }] } },
     });
   });
 
@@ -197,9 +198,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-1'),
@@ -214,10 +215,10 @@ describe('Bridge', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages[0].type).toBe('image');
     expect(messages[0].source.localUri).toBe('/tmp/xabot_img.png');
     expect(messages[0].source.sha256).toBe('deadbeef0000');
@@ -233,9 +234,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-1'),
@@ -250,10 +251,10 @@ describe('Bridge', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
     expect(messages[0].type).toBe('file');
     expect(messages[0].source.localUri).toBe('/tmp/xabot_doc.pdf');
     expect(messages[0].source.sha256).toBe('cafebabe1111');
@@ -269,9 +270,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push({
       id: messageId('msg-1'),
@@ -287,13 +288,13 @@ describe('Bridge', () => {
     await bridge.run();
 
     const invokeCall = sessionRequestCommand.mock.calls.find(
-      (c) => typeof c[0] === 'object' && 'invoke_activity' in c[0],
+      (c) => typeof c[0] === 'object' && 'generic' in c[0] && (c[0] as any).generic.name === 'invoke_activity',
     );
     expect(invokeCall).toBeTruthy();
-    const messages = (invokeCall![0] as any).invoke_activity.messages;
-    expect(messages).toHaveLength(2);
-    expect(messages[0]).toEqual({ type: 'text', text: '[图片接收失败：network down]' });
-    expect(messages[1]).toEqual({ type: 'text', text: 'try another' });
+    const messages = (invokeCall![0] as any).generic.arguments.messages;
+    // Fallback text is skipped by the bridge (not buffered), so only the text message is sent
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual({ type: 'text', text: 'try another' });
   });
 
   it('last_activity returns activity_ready → no new_activity', async () => {
@@ -302,8 +303,8 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-last', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'hello'));
     cloudMessagesIter.stop();
@@ -311,13 +312,13 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
-      invoke_activity: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-last', messages: [{ type: 'text', text: 'hello' }] } },
     });
     // new_activity was never called
     const newActivityCalls = sessionRequestCommand.mock.calls.filter(
-      (call) => typeof call[0] === 'object' && 'new_activity' in call[0],
+      (call) => typeof call[0] === 'object' && 'generic' in call[0] && (call[0] as any).generic.name === 'new_activity',
     );
     expect(newActivityCalls).toHaveLength(0);
   });
@@ -328,9 +329,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-new', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'hello'));
     cloudMessagesIter.stop();
@@ -338,10 +339,10 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(3);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-new', messages: [{ type: 'text', text: 'hello' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-new', messages: [{ type: 'text', text: 'hello' }] } },
     });
   });
 
@@ -351,9 +352,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-cached', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-cached', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'first'));
     cloudMessagesIter.push(msg(chatA, 'second'));
@@ -363,13 +364,13 @@ describe('Bridge', () => {
 
     // last_activity + new_activity for first msg, invoke for both
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] } },
     });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
-      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'second' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-cached', messages: [{ type: 'text', text: 'second' }] } },
     });
   });
 
@@ -379,10 +380,10 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-old', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-old', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge())
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-new', agent: 'test' }));
 
     cloudMessagesIter.push(msg(chatA, 'first'));
     cloudMessagesIter.push(msg(chatA, '/new'));
@@ -391,12 +392,12 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-old', messages: [{ type: 'text', text: 'first' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-old', messages: [{ type: 'text', text: 'first' }] } },
     });
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, { generic: { name: 'new_activity', arguments: { title: '' } } });
   });
 
   it('/new 你好 creates activity then invokes with prompt', async () => {
@@ -405,8 +406,8 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-new', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-new', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, '/new 你好'));
     cloudMessagesIter.stop();
@@ -414,9 +415,9 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'new_activity', arguments: { title: '' } } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
-      invoke_activity: { activity: 'act-new', messages: [{ type: 'text', text: '你好' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-new', messages: [{ type: 'text', text: '你好' }] } },
     });
   });
 
@@ -426,10 +427,10 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-cached', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-cached', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge())
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'first'));
     cloudMessagesIter.push(msg(chatA, '/compact'));
@@ -439,10 +440,10 @@ describe('Bridge', () => {
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(3, {
-      invoke_activity: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] },
+      generic: { name: 'invoke_activity', arguments: { activity: 'act-cached', messages: [{ type: 'text', text: 'first' }] } },
     });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(4, {
-      compact_activity: { activity: 'act-cached' },
+      generic: { name: 'compact_activity', arguments: { activity: 'act-cached' } },
     });
   });
 
@@ -451,7 +452,7 @@ describe('Bridge', () => {
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
 
-    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+    sessionRequestCommand.mockResolvedValueOnce(genericResponse('activity_not_found', null));
 
     cloudMessagesIter.push(msg(chatA, '/compact'));
     cloudMessagesIter.stop();
@@ -459,7 +460,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
   });
 
   it('/compact without cache falls back to last_activity then sends compact_activity', async () => {
@@ -468,8 +469,8 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-last', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, '/compact'));
     cloudMessagesIter.stop();
@@ -477,9 +478,9 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
-      compact_activity: { activity: 'act-last' },
+      generic: { name: 'compact_activity', arguments: { activity: 'act-last' } },
     });
   });
 
@@ -488,7 +489,7 @@ describe('Bridge', () => {
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
 
-    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+    sessionRequestCommand.mockResolvedValueOnce(genericResponse('activity_not_found', null));
     cloudSend.mockResolvedValue(messageId('mid-1'));
 
     cloudMessagesIter.push(msg(chatA, '/compact'));
@@ -497,7 +498,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '当前暂无活动中的对话' });
   });
 
@@ -507,8 +508,8 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-last', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-last', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, '/cancel'));
     cloudMessagesIter.stop();
@@ -516,9 +517,9 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(2);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, {
-      cancel_activity: { activity: 'act-last' },
+      generic: { name: 'cancel_activity', arguments: { activity: 'act-last' } },
     });
   });
 
@@ -527,7 +528,7 @@ describe('Bridge', () => {
     bridge.setSession(mockSession(sessionRequestCommand));
     bridge.markEstablished();
 
-    sessionRequestCommand.mockResolvedValueOnce({ kind: 'activity_not_found' });
+    sessionRequestCommand.mockResolvedValueOnce(genericResponse('activity_not_found', null));
     cloudSend.mockResolvedValue(messageId('mid-1'));
 
     cloudMessagesIter.push(msg(chatA, '/cancel'));
@@ -536,7 +537,7 @@ describe('Bridge', () => {
     await bridge.run();
 
     expect(sessionRequestCommand).toHaveBeenCalledTimes(1);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '当前暂无活动中的对话' });
   });
 
@@ -570,12 +571,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'content_delta',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'Hello ' },
-      },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Hello ' } } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Hello ' });
@@ -614,12 +610,7 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'content_part',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'Intermediate result' },
-      },
+      event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Intermediate result' } } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Intermediate result' });
@@ -653,13 +644,10 @@ describe('Bridge', () => {
 
     const response = await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'complete',
-        assistantReply: [{ type: 'text', text: 'Final answer' }],
-      },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Final answer' }] } },
     });
 
-    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(response).toEqual(acknowledge());
     // complete always sends assistantReply via _sendContentPart
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Final answer' });
   });
@@ -672,11 +660,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'notify',
-        requestId: 'req-1',
-        message: 'Heads up!',
-      },
+      event: { name: 'notify', data: { requestId: 'req-1', message: 'Heads up!' } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Heads up!' });
@@ -690,7 +674,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'info', title: 't', content: 'info msg' },
+      event: { name: 'info', data: { title: 't', content: 'info msg' } },
     } as any);
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'ℹ️ t\ninfo msg' });
@@ -704,7 +688,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'warn', title: 't', content: 'warn msg' },
+      event: { name: 'warn', data: { title: 't', content: 'warn msg' } },
     } as any);
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '⚠️ t\nwarn msg' });
@@ -718,7 +702,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'error', title: 't', content: 'error msg' },
+      event: { name: 'error', data: { title: 't', content: 'error msg' } },
     } as any);
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '❌ t\nerror msg' });
@@ -727,12 +711,7 @@ describe('Bridge', () => {
   it('handleEvent without sessionChatId returns acknowledge without sending', async () => {
     await bridge.handleEvent('any-act', {
       activity: 'any-act',
-      event: {
-        type: 'content_delta',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'orphan' },
-      },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'orphan' } } },
     });
 
     expect(cloudSend).not.toHaveBeenCalled();
@@ -764,26 +743,23 @@ describe('Bridge', () => {
     actionBridge.markEstablished();
     (actionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = actionBridge.handleEvent('act-1', {
+    const eventPromise = actionBridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-1',
-        toolName: 'test_tool',
-        arguments: '{}',
-        actionId: 'action-1',
-        description: 'Test action',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-1',
+      toolName: 'test_tool',
+      arguments: '{}',
+      actionId: 'action-1',
+      description: 'Test action',
+      alert: 'info',
+    }));
 
     // cloudSend called with the action request notification
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
-    actionBridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'approve' });
+    actionBridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'approve' }));
 
     const response = await eventPromise;
-    expect(response).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
+    expect(response).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
   });
 
   it('resolvePending resolves a blocked question', async () => {
@@ -810,22 +786,19 @@ describe('Bridge', () => {
     questionBridge.markEstablished();
     (questionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = questionBridge.handleEvent('act-1', {
+    const eventPromise = questionBridge.handleCommand(genericCommand('question', {
       activity: 'act-1',
-      event: {
-        type: 'question',
-        requestId: 'req-q1',
-        question: 'What is your name?',
-        options: ['Alice', 'Bob'],
-      },
-    });
+      requestId: 'req-q1',
+      question: 'What is your name?',
+      options: ['Alice', 'Bob'],
+    }));
 
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
-    questionBridge.resolvePending('req-q1', { kind: 'question', requestId: 'req-q1', type: 'answer', content: 'Alice' });
+    questionBridge.resolvePending('req-q1', genericResponse('question', { requestId: 'req-q1', type: 'answer', content: 'Alice' }));
 
     const response = await eventPromise;
-    expect(response).toEqual({ kind: 'question', requestId: 'req-q1', type: 'answer', content: 'Alice' });
+    expect(response).toEqual(genericResponse('question', { requestId: 'req-q1', type: 'answer', content: 'Alice' }));
   });
 
   // ── close() rejects pending ─────────────────────────────────────────────
@@ -854,18 +827,15 @@ describe('Bridge', () => {
     closeBridge.markEstablished();
     (closeBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const eventPromise = closeBridge.handleEvent('act-1', {
+    const eventPromise = closeBridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-1',
-        toolName: 'test_tool',
-        arguments: '{}',
-        actionId: 'action-1',
-        description: 'Test action',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-1',
+      toolName: 'test_tool',
+      arguments: '{}',
+      actionId: 'action-1',
+      description: 'Test action',
+      alert: 'info',
+    }));
 
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
@@ -878,33 +848,29 @@ describe('Bridge', () => {
   // ── handleCommand ───────────────────────────────────────────────────────
 
   it('handleCommand returns acknowledge', async () => {
-    const response = await bridge.handleCommand({ new_activity: { title: null } });
-    expect(response).toEqual({ kind: 'acknowledge' });
+    const response = await bridge.handleCommand(genericCommand('new_activity', { title: null }));
+    expect(response).toEqual(acknowledge());
   });
 
   it('handleCommand message sends content to cloud via sessionChatId', async () => {
     const chatA = channelId('chat-a');
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
 
-    const response = await bridge.handleCommand({
-      message: {
-        content: [
-          { type: 'text', text: 'hello from agent' },
-          { type: 'image', source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 } },
-        ],
-      },
-    });
+    const response = await bridge.handleCommand(genericCommand('message', {
+      content: [
+        { type: 'text', text: 'hello from agent' },
+        { type: 'image', source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 } },
+      ],
+    }));
 
-    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(response).toEqual(acknowledge());
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'hello from agent' });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
   });
 
   it('handleCommand message without sessionChatId returns acknowledge', async () => {
-    const response = await bridge.handleCommand({
-      message: { content: [{ type: 'text', text: 'orphan' }] },
-    });
-    expect(response).toEqual({ kind: 'acknowledge' });
+    const response = await bridge.handleCommand(genericCommand('message', { content: [{ type: 'text', text: 'orphan' }] }));
+    expect(response).toEqual(acknowledge());
     expect(cloudSend).not.toHaveBeenCalled();
   });
 
@@ -918,15 +884,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'content_delta',
-        round: 'r1',
-        pair: 'p1',
-        payload: {
-          type: 'image',
-          source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 },
-        },
-      },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'image', source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 } } } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
@@ -959,16 +917,10 @@ describe('Bridge', () => {
 
     const response = await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: {
-        type: 'complete',
-        assistantReply: [
-          { type: 'text', text: 'Here is the image:' },
-          { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } },
-        ],
-      },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Here is the image:' }, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } }] } },
     });
 
-    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(response).toEqual(acknowledge());
     // complete always sends assistantReply via _sendContentPart
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Here is the image:' });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } });
@@ -984,24 +936,21 @@ describe('Bridge', () => {
     // Make cloud.send reject on the next call
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await bridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-fail',
-        toolName: 'test_tool',
-        arguments: '{}',
-        actionId: 'action-1',
-        description: 'Test action',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-fail',
+      toolName: 'test_tool',
+      arguments: '{}',
+      actionId: 'action-1',
+      description: 'Test action',
+      alert: 'info',
+    }));
 
     // Should return error response, not hang
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' });
 
     // Pending should be cleaned up — resolving after failure should be a no-op
-    bridge.resolvePending('req-fail', { kind: 'action', requestId: 'req-fail', type: 'approve' });
+    bridge.resolvePending('req-fail', genericResponse('action', { requestId: 'req-fail', type: 'approve' }));
     // No unhandled rejection
   });
 
@@ -1012,15 +961,12 @@ describe('Bridge', () => {
 
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 
-    const response = await bridge.handleEvent('act-1', {
+    const response = await bridge.handleCommand(genericCommand('question', {
       activity: 'act-1',
-      event: {
-        type: 'question',
-        requestId: 'req-q-fail',
-        question: 'What?',
-        options: ['A', 'B'],
-      },
-    });
+      requestId: 'req-q-fail',
+      question: 'What?',
+      options: ['A', 'B'],
+    }));
 
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward question to cloud' });
   });
@@ -1034,9 +980,9 @@ describe('Bridge', () => {
 
     // Cloud message arrives → last_activity → activity_not_found → new_activity + invoke_activity
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-e2e', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'hello'));
     cloudMessagesIter.stop();
@@ -1048,12 +994,7 @@ describe('Bridge', () => {
     // Agent responds with content_delta
     await bridge.handleEvent('act-e2e', {
       activity: 'act-e2e',
-      event: {
-        type: 'content_delta',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'Hi there!' },
-      },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Hi there!' } } },
     });
 
     // Verify agent→cloud path via sessionChatId
@@ -1087,9 +1028,9 @@ describe('Bridge', () => {
     verboseBridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-e2e2', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-e2e2', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'ping'));
     cloudMessagesIter.stop();
@@ -1098,12 +1039,7 @@ describe('Bridge', () => {
     // Agent sends content_part — should be forwarded
     await verboseBridge.handleEvent('act-e2e2', {
       activity: 'act-e2e2',
-      event: {
-        type: 'content_part',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'pong' },
-      },
+      event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'pong' } } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
@@ -1111,13 +1047,10 @@ describe('Bridge', () => {
     // Agent sends complete — complete always sends assistantReply via _sendContentPart
     const response = await verboseBridge.handleEvent('act-e2e2', {
       activity: 'act-e2e2',
-      event: {
-        type: 'complete',
-        assistantReply: [{ type: 'text', text: 'pong' }],
-      },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'pong' }] } },
     });
 
-    expect(response).toEqual({ kind: 'acknowledge' });
+    expect(response).toEqual(acknowledge());
     // Complete sends the assistantReply again
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'pong' });
   });
@@ -1128,9 +1061,9 @@ describe('Bridge', () => {
     bridge.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-a', agent: 'test' })
-      .mockResolvedValue({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-a', agent: 'test' }))
+      .mockResolvedValue(acknowledge());
 
     cloudMessagesIter.push(msg(chatA, 'first'));
     cloudMessagesIter.push(msg(chatA, 'second'));
@@ -1139,16 +1072,13 @@ describe('Bridge', () => {
 
     // Only one new_activity for the same chatId
     expect(sessionRequestCommand).toHaveBeenCalledTimes(4);
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, 'last_activity');
-    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { new_activity: { title: '' } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(1, { generic: { name: 'last_activity', arguments: {} } });
+    expect(sessionRequestCommand).toHaveBeenNthCalledWith(2, { generic: { name: 'new_activity', arguments: { title: '' } } });
 
     // Outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
       activity: 'act-a',
-      event: {
-        type: 'content_delta', round: 'r1', pair: 'p1',
-        payload: { type: 'text', text: 'reply' },
-      },
+      event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'reply' });
@@ -1169,9 +1099,7 @@ describe('Bridge', () => {
 
     bridge.setSession(mockSession(sessionRequestCommand, 'chat-1'));
     bridge.markEstablished();
-    await bridge.handleCommand({
-      message: { content: [{ type: 'text', text: 'hello' }] },
-    } as any);
+    await bridge.handleCommand(genericCommand('message', { content: [{ type: 'text', text: 'hello' }] }));
 
     expect(newCloud.send).toHaveBeenCalledWith('chat-1', { type: 'text', text: 'hello' });
   });
@@ -1208,9 +1136,9 @@ describe('Bridge', () => {
     b.markEstablished();
 
     sessionRequestCommand
-      .mockResolvedValueOnce({ kind: 'activity_not_found' })
-      .mockResolvedValueOnce({ kind: 'activity_ready', activity: 'act-1', agent: 'test' })
-      .mockResolvedValueOnce({ kind: 'acknowledge' });
+      .mockResolvedValueOnce(genericResponse('activity_not_found', null))
+      .mockResolvedValueOnce(genericResponse('activity_ready', { activity: 'act-1', agent: 'test' }))
+      .mockResolvedValueOnce(acknowledge());
 
     cloudMessagesIter.push(msg(channelId('chat-a'), 'delayed hello'));
     cloudMessagesIter.stop();
@@ -1240,50 +1168,44 @@ describe('Bridge', () => {
     cloudSend.mockClear();
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const p1 = bridge.handleEvent('act-1', {
+    const p1 = bridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-1',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-1',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    }));
 
     // First call sent message to cloud
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(1));
 
-    const p2 = bridge.handleEvent('act-1', {
+    const p2 = bridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-2',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a2',
-        description: 'test2',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-2',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a2',
+      description: 'test2',
+      alert: 'info',
+    }));
 
     // Second call did NOT send (queued)
     expect(cloudSend).toHaveBeenCalledTimes(1);
 
     // Resolve first — should drive queue and send second
-    bridge.resolvePending('req-1', { kind: 'action', requestId: 'req-1', type: 'approve' });
+    bridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'approve' }));
 
     const r1 = await p1;
-    expect(r1).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
+    expect(r1).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
 
     // Queue drive sends second message
     expect(cloudSend).toHaveBeenCalledTimes(2);
 
-    bridge.resolvePending('req-2', { kind: 'action', requestId: 'req-2', type: 'approve' });
+    bridge.resolvePending('req-2', genericResponse('action', { requestId: 'req-2', type: 'approve' }));
     const r2 = await p2;
-    expect(r2).toEqual({ kind: 'action', requestId: 'req-2', type: 'approve' });
+    expect(r2).toEqual(genericResponse('action', { requestId: 'req-2', type: 'approve' }));
   });
 
   it('queue: different targetKeys do not interfere', async () => {
@@ -1293,39 +1215,33 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
     (bridge as any).bindActivity(channelId('chat-b'), userId('u2'), 'act-2');
 
-    const p1 = bridge.handleEvent('act-1', {
+    const p1 = bridge.handleCommand(genericCommand('action_request', {
       activity: 'act-1',
-      event: {
-        type: 'action_request',
-        requestId: 'req-a',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a1',
-        description: 'test',
-        alert: 'info',
-      },
-    });
-    const p2 = bridge.handleEvent('act-2', {
+      requestId: 'req-a',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a1',
+      description: 'test',
+      alert: 'info',
+    }));
+    const p2 = bridge.handleCommand(genericCommand('action_request', {
       activity: 'act-2',
-      event: {
-        type: 'action_request',
-        requestId: 'req-b',
-        toolName: 'bash',
-        arguments: '',
-        actionId: 'a2',
-        description: 'test',
-        alert: 'info',
-      },
-    });
+      requestId: 'req-b',
+      toolName: 'bash',
+      arguments: '',
+      actionId: 'a2',
+      description: 'test',
+      alert: 'info',
+    }));
 
     // Both sent immediately (different targets)
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(2));
 
-    bridge.resolvePending('req-a', { kind: 'action', requestId: 'req-a', type: 'approve' });
-    bridge.resolvePending('req-b', { kind: 'action', requestId: 'req-b', type: 'reject', reason: 'no' });
+    bridge.resolvePending('req-a', genericResponse('action', { requestId: 'req-a', type: 'approve' }));
+    bridge.resolvePending('req-b', genericResponse('action', { requestId: 'req-b', type: 'reject', reason: 'no' }));
 
-    expect(await p1).toEqual({ kind: 'action', requestId: 'req-a', type: 'approve' });
-    expect(await p2).toEqual({ kind: 'action', requestId: 'req-b', type: 'reject', reason: 'no' });
+    expect(await p1).toEqual(genericResponse('action', { requestId: 'req-a', type: 'approve' }));
+    expect(await p2).toEqual(genericResponse('action', { requestId: 'req-b', type: 'reject', reason: 'no' }));
   });
 
   // ── tryParsePendingResponse coverage ────────────────────────────────────
@@ -1334,7 +1250,6 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const event: any = {
-      type: 'action_request',
       requestId: 'req-1',
       toolName: 'bash',
       arguments: '',
@@ -1344,62 +1259,59 @@ describe('Bridge', () => {
     };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'action_request', event);
 
-    expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve_always' });
-    expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual({ kind: 'action', requestId: 'req-1', type: 'approve' });
-    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '用户取消执行' });
+    expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve_always' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '用户取消执行' }));
     // Free text is treated as reject with the text as reason
-    expect((bridge as any).tryParsePendingResponse(item, '太危险了')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '太危险了' });
-    expect((bridge as any).tryParsePendingResponse(item, '不需要')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: '不需要' });
-    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'action', requestId: 'req-1', type: 'reject', reason: 'n' });
+    expect((bridge as any).tryParsePendingResponse(item, '太危险了')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '太危险了' }));
+    expect((bridge as any).tryParsePendingResponse(item, '不需要')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '不需要' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'n' }));
   });
 
   it('tryParsePendingResponse question numeric option and free text', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const event: any = {
-      type: 'question',
       requestId: 'req-1',
       question: 'Choose?',
       options: ['A', 'B', 'C'],
     };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'question', event);
 
-    expect((bridge as any).tryParsePendingResponse(item, '2')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'B' });
-    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual({ kind: 'question', requestId: 'req-1', type: 'skip', reason: '用户取消执行' });
+    expect((bridge as any).tryParsePendingResponse(item, '2')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'B' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'skip', reason: '用户取消执行' }));
     // n is no longer a skip command — treated as free text answer
-    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'n' });
-    expect((bridge as any).tryParsePendingResponse(item, 'no thanks')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'no thanks' });
-    expect((bridge as any).tryParsePendingResponse(item, 'free answer')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: 'free answer' });
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'n' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'no thanks')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'no thanks' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'free answer')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'free answer' }));
 
     // Out of range numeric
-    expect((bridge as any).tryParsePendingResponse(item, '99')).toEqual({ kind: 'question', requestId: 'req-1', type: 'answer', content: '99' });
+    expect((bridge as any).tryParsePendingResponse(item, '99')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: '99' }));
   });
 
   it('tryParsePendingResponse sensitive_info_operation collect and cancel', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const event: any = {
-      type: 'sensitive_info_operation',
-      requestId: 'req-1',
-      operation: {
+    const event: any = { requestId: 'req-1', operation: {
         type: 'collect',
         items: [
           { key: 'K1', displayText: 'Key1', hint: '', siType: 'secret' },
           { key: 'K2', displayText: 'Key2', hint: '', siType: 'env_var' },
         ],
-      },
-    };
+      } };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
 
     const result = (bridge as any).tryParsePendingResponse(item, 'val1\nval2');
-    expect(result?.kind).toBe('sensitive_info_operation');
-    expect(result?.results).toEqual([
+    expect(result?.kind).toBe('generic'); expect((result as any)?.name).toBe('sensitive_info_operation');
+    expect(result?.data?.results).toEqual([
       { type: 'provided', key: 'K1', value: 'val1' },
       { type: 'provided', key: 'K2', value: 'val2' },
     ]);
 
     const cancelResult = (bridge as any).tryParsePendingResponse(item, 'c');
-    expect(cancelResult?.results).toEqual([
+    expect(cancelResult?.kind).toBe('generic');
+    expect(cancelResult?.name).toBe('sensitive_info_operation');
+    expect((cancelResult as any)?.data?.results).toEqual([
       { type: 'collect_skipped', key: 'K1', reason: '用户取消执行' },
       { type: 'collect_skipped', key: 'K2', reason: '用户取消执行' },
     ]);
@@ -1408,20 +1320,18 @@ describe('Bridge', () => {
   it('tryParsePendingResponse sensitive_info_operation delete', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
-    const event: any = {
-      type: 'sensitive_info_operation',
-      requestId: 'req-1',
-      operation: {
+    const event: any = { requestId: 'req-1', operation: {
         type: 'delete',
         items: [
           { key: 'K1', displayText: 'Key1', id: 'id1', siType: 'secret' },
         ],
-      },
-    };
+      } };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
 
     const result = (bridge as any).tryParsePendingResponse(item, 'y');
-    expect(result?.results).toEqual([{ type: 'deleted', id: 'id1' }]);
+    expect(result?.kind).toBe('generic');
+    expect(result?.name).toBe('sensitive_info_operation');
+    expect((result as any)?.data?.results).toEqual([{ type: 'deleted', id: 'id1' }]);
   });
 
   // ── Thinking and tool-use indicators ────────────────────────────────────
@@ -1453,7 +1363,7 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'think', requestId: 't1' },
+      event: { name: 'think', data: { requestId: 't1' } },
     } as any);
 
     const thinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
@@ -1487,11 +1397,11 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'think', requestId: 't1' },
+      event: { name: 'think', data: { requestId: 't1' } },
     } as any);
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'think', requestId: 't2' },
+      event: { name: 'think', data: { requestId: 't2' } },
     } as any);
 
     const thinkCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
@@ -1525,20 +1435,12 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'think', requestId: 't1' },
+      event: { name: 'think', data: { requestId: 't1' } },
     } as any);
 
     cloudSend.mockClear();
 
-    await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: {
-        type: 'content_part',
-        round: 'r1',
-        pair: 'p1',
-        payload: { type: 'text', text: 'result' },
-      },
-    });
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'result' } } } } as any);
 
     const contentCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text === 'result');
     expect(contentCall).toBeTruthy();
@@ -1573,14 +1475,14 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'think', requestId: 't1' },
+      event: { name: 'think', data: { requestId: 't1' } },
     } as any);
 
     cloudSend.mockClear();
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
@@ -1616,7 +1518,7 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1650,11 +1552,11 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
     } as any);
     await verboseBridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'tool_use', requestId: 'tu2', toolName: 'bash', arguments: '{}' },
+      event: { name: 'tool_use', data: { requestId: 'tu2', toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const toolCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1669,14 +1571,14 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' },
+      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
     } as any);
 
     cloudSend.mockClear();
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'pair_complete', round: 'r1', pair: 'p1' },
+      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
     } as any);
 
     const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
@@ -1691,7 +1593,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'pair_complete', round: 'r1', pair: 'p1' },
+      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
     } as any);
 
     const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
@@ -1723,10 +1625,10 @@ describe('Bridge', () => {
     verboseBridge.markEstablished();
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'think', requestId: 't1' } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'tool_use', requestId: 'tu1', toolName: 'bash', arguments: '{}' } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'pair_complete', round: 'r1', pair: 'p1' } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] } });
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'think', data: { requestId: 't1' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } } });
 
     const texts = cloudSend.mock.calls
       .filter((c) => c[1]?.type === 'text')
@@ -1744,7 +1646,7 @@ describe('Bridge', () => {
     bridge.markEstablished();
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    sessionRequestCommand.mockResolvedValue({ kind: 'acknowledge' });
+    sessionRequestCommand.mockResolvedValue(acknowledge());
     cloudMessagesIter.push(msg(chatA, 'hello'));
     cloudMessagesIter.stop();
     await bridge.run();
@@ -1755,7 +1657,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: 'act-1',
-      event: { type: 'complete', assistantReply: [{ type: 'text', text: 'done' }] },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } },
     });
 
     expect((bridge as any).cloud.releaseTypingIndicator).toHaveBeenCalled();

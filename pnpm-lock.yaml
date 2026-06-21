@@ -18,8 +18,8 @@ importers:
         specifier: ^22.0.1
         version: 22.0.1
       xacpp:
-        specifier: ^0.6.3
-        version: 0.6.3
+        specifier: file:../xacpp-ts
+        version: file:../xacpp-ts
     devDependencies:
       '@types/node':
         specifier: ^25.6.2
@@ -687,8 +687,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  xacpp@0.6.3:
-    resolution: {integrity: sha512-R8p+iGsf6DNLNbB3Mh9q1Q9EEwG8dN9mmSRHNl0R3d98bXdiClCdJ/xOrBhXMidIXLeV0Ou/zNwlO1SMfFHpOw==}
+  xacpp@file:../xacpp-ts:
+    resolution: {directory: ../xacpp-ts, type: directory}
 
 snapshots:
 
@@ -1249,4 +1249,4 @@ snapshots:
 
   ws@8.21.0: {}
 
-  xacpp@0.6.3: {}
+  xacpp@file:../xacpp-ts: {}

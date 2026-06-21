@@ -1,4 +1,5 @@
 import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler } from 'xacpp';
+import { acknowledge } from 'xacpp';
 import type { Bridge } from '../bridge/index.js';
 
 /**
@@ -20,12 +21,12 @@ export class XabotSessionHandler implements XacppSessionHandler {
   }
 
   async onCommand(command: XacppCommand): Promise<XacppResponse> {
-    if (!this.bridge) return { kind: 'acknowledge' };
+    if (!this.bridge) return acknowledge();
     return this.bridge.handleCommand(command);
   }
 
   async onEvent(event: XacppActivityEvent): Promise<XacppResponse> {
-    if (!this.bridge) return { kind: 'acknowledge' };
+    if (!this.bridge) return acknowledge();
     return this.bridge.handleEvent(event.activity, event);
   }
 }

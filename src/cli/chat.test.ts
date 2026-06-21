@@ -59,6 +59,8 @@ describe('chat', () => {
       }
     });
 
+    vi.spyOn(XacppPeer.prototype, 'negotiate').mockResolvedValue(undefined);
+
     vi.spyOn(XacppPeer.prototype, 'disconnect').mockResolvedValue(undefined);
 
     vi.spyOn(SocketTransport, 'connectTo').mockReturnValue({

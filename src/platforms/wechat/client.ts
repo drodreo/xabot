@@ -139,6 +139,16 @@ export class WechatClient implements PlatformClient {
 
         for (const msg of data.msgs ?? []) {
           if (msg.message_type !== 1) continue;
+
+          // 消息新鲜度检查：超过 3 分钟的消息视为过期，丢弃
+          if (msg.create_time_ms) {
+            const ageMs = Date.now() - msg.create_time_ms;
+            if (ageMs > 3 * 60 * 1000) {
+              log.info('dropping stale message: age=%dms, from=%s', ageMs, msg.from_user_id);
+              continue;
+            }
+          }
+
           this.contextTokenStore.set(msg.from_user_id, msg.context_token);
 
           let standardMsg: Message;
