@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Bridge } from './index.js';
 import { channelId, messageId, userId, type ChannelId, type Message } from '../core/types.js';
-import { acknowledge, genericCommand, genericResponse } from 'xacpp';
+import { acknowledge, errorResponse, genericCommand, genericResponse } from 'xacpp';
 import type { XacppTransport, XacppSession, XacppResponse } from 'xacpp';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -570,7 +570,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Hello ' } } },
     });
 
@@ -609,7 +609,7 @@ describe('Bridge', () => {
     };
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Intermediate result' } } },
     });
 
@@ -643,7 +643,7 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     const response = await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Final answer' }] } },
     });
 
@@ -659,8 +659,8 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'notify', data: { requestId: 'req-1', message: 'Heads up!' } },
+      activity: { id: 'act-1' },
+      event: { name: 'notify', data: { message: 'Heads up!' } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'Heads up!' });
@@ -673,7 +673,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'info', data: { title: 't', content: 'info msg' } },
     } as any);
 
@@ -687,7 +687,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'warn', data: { title: 't', content: 'warn msg' } },
     } as any);
 
@@ -701,7 +701,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'error', data: { title: 't', content: 'error msg' } },
     } as any);
 
@@ -710,7 +710,7 @@ describe('Bridge', () => {
 
   it('handleEvent without sessionChatId returns acknowledge without sending', async () => {
     await bridge.handleEvent('any-act', {
-      activity: 'any-act',
+      activity: { id: 'any-act' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'orphan' } } },
     });
 
@@ -744,22 +744,20 @@ describe('Bridge', () => {
     (actionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = actionBridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-1',
       toolName: 'test_tool',
       arguments: '{}',
       actionId: 'action-1',
       description: 'Test action',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
 
     // cloudSend called with the action request notification
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
-    actionBridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'approve' }));
+    actionBridge.resolvePending('chat-a:u1', genericResponse('action', { type: 'approve' }));
 
     const response = await eventPromise;
-    expect(response).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
+    expect(response).toEqual(genericResponse('action', { type: 'approve' }));
   });
 
   it('resolvePending resolves a blocked question', async () => {
@@ -787,18 +785,16 @@ describe('Bridge', () => {
     (questionBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = questionBridge.handleCommand(genericCommand('question', {
-      activity: 'act-1',
-      requestId: 'req-q1',
       question: 'What is your name?',
       options: ['Alice', 'Bob'],
-    }));
+    }, { id: 'act-1' }));
 
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
-    questionBridge.resolvePending('req-q1', genericResponse('question', { requestId: 'req-q1', type: 'answer', content: 'Alice' }));
+    questionBridge.resolvePending('chat-a:u1', genericResponse('question', { type: 'answer', content: 'Alice' }));
 
     const response = await eventPromise;
-    expect(response).toEqual(genericResponse('question', { requestId: 'req-q1', type: 'answer', content: 'Alice' }));
+    expect(response).toEqual(genericResponse('question', { type: 'answer', content: 'Alice' }));
   });
 
   // ── close() rejects pending ─────────────────────────────────────────────
@@ -828,14 +824,12 @@ describe('Bridge', () => {
     (closeBridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const eventPromise = closeBridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-1',
       toolName: 'test_tool',
       arguments: '{}',
       actionId: 'action-1',
       description: 'Test action',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
 
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalled());
 
@@ -863,14 +857,16 @@ describe('Bridge', () => {
       ],
     }));
 
-    expect(response).toEqual(acknowledge());
+    // message 走治理管线：投递成功计数 +1，响应携带剩余次数
+    expect(response).toEqual(genericResponse('message', { remaining: 4, message: '内容已投递，到下一次用户输入前你还可以报告 4 次' }));
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'hello from agent' });
     expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'image', source: { localUri: '', remoteUrl: 'https://example.com/img.png', mimeType: 'image/png', sizeBytes: 100 } });
   });
 
-  it('handleCommand message without sessionChatId returns acknowledge', async () => {
+  it('handleCommand message without sessionChatId returns delivery error', async () => {
     const response = await bridge.handleCommand(genericCommand('message', { content: [{ type: 'text', text: 'orphan' }] }));
-    expect(response).toEqual(acknowledge());
+    // 治理管线：无投递目标时返回错误让发起方感知未送达，不静默吞掉
+    expect(response).toEqual(errorResponse('report_delivery_failed', '报告通道未就绪（会话未绑定聊天），报告未送达'));
     expect(cloudSend).not.toHaveBeenCalled();
   });
 
@@ -883,7 +879,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'image', source: { remoteUrl: 'https://example.com/img.png', localUri: '', mimeType: 'image/png', sizeBytes: 100 } } } },
     });
 
@@ -916,7 +912,7 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     const response = await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Here is the image:' }, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } }] } },
     });
 
@@ -937,20 +933,18 @@ describe('Bridge', () => {
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 
     const response = await bridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-fail',
       toolName: 'test_tool',
       arguments: '{}',
       actionId: 'action-1',
       description: 'Test action',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
 
     // Should return error response, not hang
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' });
 
     // Pending should be cleaned up — resolving after failure should be a no-op
-    bridge.resolvePending('req-fail', genericResponse('action', { requestId: 'req-fail', type: 'approve' }));
+    bridge.resolvePending('chat-a:u1', genericResponse('action', { type: 'approve' }));
     // No unhandled rejection
   });
 
@@ -962,11 +956,9 @@ describe('Bridge', () => {
     cloudSend.mockRejectedValueOnce(new Error('cloud unavailable'));
 
     const response = await bridge.handleCommand(genericCommand('question', {
-      activity: 'act-1',
-      requestId: 'req-q-fail',
       question: 'What?',
       options: ['A', 'B'],
-    }));
+    }, { id: 'act-1' }));
 
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward question to cloud' });
   });
@@ -993,7 +985,7 @@ describe('Bridge', () => {
 
     // Agent responds with content_delta
     await bridge.handleEvent('act-e2e', {
-      activity: 'act-e2e',
+      activity: { id: 'act-e2e' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'Hi there!' } } },
     });
 
@@ -1038,7 +1030,7 @@ describe('Bridge', () => {
 
     // Agent sends content_part — should be forwarded
     await verboseBridge.handleEvent('act-e2e2', {
-      activity: 'act-e2e2',
+      activity: { id: 'act-e2e2' },
       event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'pong' } } },
     });
 
@@ -1046,7 +1038,7 @@ describe('Bridge', () => {
 
     // Agent sends complete — complete always sends assistantReply via _sendContentPart
     const response = await verboseBridge.handleEvent('act-e2e2', {
-      activity: 'act-e2e2',
+      activity: { id: 'act-e2e2' },
       event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'pong' }] } },
     });
 
@@ -1077,7 +1069,7 @@ describe('Bridge', () => {
 
     // Outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
-      activity: 'act-a',
+      activity: { id: 'act-a' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } } },
     });
 
@@ -1169,43 +1161,39 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const p1 = bridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-1',
       toolName: 'bash',
       arguments: '',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
 
     // First call sent message to cloud
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(1));
 
     const p2 = bridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-2',
       toolName: 'bash',
       arguments: '',
       actionId: 'a2',
       description: 'test2',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
 
     // Second call did NOT send (queued)
     expect(cloudSend).toHaveBeenCalledTimes(1);
 
     // Resolve first — should drive queue and send second
-    bridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'approve' }));
+    bridge.resolvePending('chat-a:u1', genericResponse('action', { type: 'approve' }));
 
     const r1 = await p1;
-    expect(r1).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
+    expect(r1).toEqual(genericResponse('action', { type: 'approve' }));
 
     // Queue drive sends second message
     expect(cloudSend).toHaveBeenCalledTimes(2);
 
-    bridge.resolvePending('req-2', genericResponse('action', { requestId: 'req-2', type: 'approve' }));
+    bridge.resolvePending('chat-a:u1', genericResponse('action', { type: 'approve' }));
     const r2 = await p2;
-    expect(r2).toEqual(genericResponse('action', { requestId: 'req-2', type: 'approve' }));
+    expect(r2).toEqual(genericResponse('action', { type: 'approve' }));
   });
 
   it('queue: different targetKeys do not interfere', async () => {
@@ -1216,32 +1204,28 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(channelId('chat-b'), userId('u2'), 'act-2');
 
     const p1 = bridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-1',
-      requestId: 'req-a',
       toolName: 'bash',
       arguments: '',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    }));
+    }, { id: 'act-1' }));
     const p2 = bridge.handleCommand(genericCommand('action_request', {
-      activity: 'act-2',
-      requestId: 'req-b',
       toolName: 'bash',
       arguments: '',
       actionId: 'a2',
       description: 'test',
       alert: 'info',
-    }));
+    }, { id: 'act-2' }));
 
     // Both sent immediately (different targets)
     await vi.waitFor(() => expect(cloudSend).toHaveBeenCalledTimes(2));
 
-    bridge.resolvePending('req-a', genericResponse('action', { requestId: 'req-a', type: 'approve' }));
-    bridge.resolvePending('req-b', genericResponse('action', { requestId: 'req-b', type: 'reject', reason: 'no' }));
+    bridge.resolvePending('chat-a:u1', genericResponse('action', { type: 'approve' }));
+    bridge.resolvePending('chat-b:u2', genericResponse('action', { type: 'reject', reason: 'no' }));
 
-    expect(await p1).toEqual(genericResponse('action', { requestId: 'req-a', type: 'approve' }));
-    expect(await p2).toEqual(genericResponse('action', { requestId: 'req-b', type: 'reject', reason: 'no' }));
+    expect(await p1).toEqual(genericResponse('action', { type: 'approve' }));
+    expect(await p2).toEqual(genericResponse('action', { type: 'reject', reason: 'no' }));
   });
 
   // ── tryParsePendingResponse coverage ────────────────────────────────────
@@ -1250,7 +1234,6 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const event: any = {
-      requestId: 'req-1',
       toolName: 'bash',
       arguments: '',
       actionId: 'a1',
@@ -1259,79 +1242,33 @@ describe('Bridge', () => {
     };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'action_request', event);
 
-    expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve_always' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'approve' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '用户取消执行' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'a')).toEqual(genericResponse('action', { type: 'approve_always' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'y')).toEqual(genericResponse('action', { type: 'approve' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('action', { type: 'reject', reason: '用户取消执行' }));
     // Free text is treated as reject with the text as reason
-    expect((bridge as any).tryParsePendingResponse(item, '太危险了')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '太危险了' }));
-    expect((bridge as any).tryParsePendingResponse(item, '不需要')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: '不需要' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'n' }));
+    expect((bridge as any).tryParsePendingResponse(item, '太危险了')).toEqual(genericResponse('action', { type: 'reject', reason: '太危险了' }));
+    expect((bridge as any).tryParsePendingResponse(item, '不需要')).toEqual(genericResponse('action', { type: 'reject', reason: '不需要' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('action', { type: 'reject', reason: 'n' }));
   });
 
   it('tryParsePendingResponse question numeric option and free text', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
 
     const event: any = {
-      requestId: 'req-1',
       question: 'Choose?',
       options: ['A', 'B', 'C'],
     };
     const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'question', event);
 
-    expect((bridge as any).tryParsePendingResponse(item, '2')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'B' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'skip', reason: '用户取消执行' }));
+    expect((bridge as any).tryParsePendingResponse(item, '2')).toEqual(genericResponse('question', { type: 'answer', content: 'B' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'c')).toEqual(genericResponse('question', { type: 'skip', reason: '用户取消执行' }));
     // n is no longer a skip command — treated as free text answer
-    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'n' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'no thanks')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'no thanks' }));
-    expect((bridge as any).tryParsePendingResponse(item, 'free answer')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: 'free answer' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'n')).toEqual(genericResponse('question', { type: 'answer', content: 'n' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'no thanks')).toEqual(genericResponse('question', { type: 'answer', content: 'no thanks' }));
+    expect((bridge as any).tryParsePendingResponse(item, 'free answer')).toEqual(genericResponse('question', { type: 'answer', content: 'free answer' }));
 
     // Out of range numeric
-    expect((bridge as any).tryParsePendingResponse(item, '99')).toEqual(genericResponse('question', { requestId: 'req-1', type: 'answer', content: '99' }));
-  });
-
-  it('tryParsePendingResponse sensitive_info_operation collect and cancel', async () => {
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
-
-    const event: any = { requestId: 'req-1', operation: {
-        type: 'collect',
-        items: [
-          { key: 'K1', displayText: 'Key1', hint: '', siType: 'secret' },
-          { key: 'K2', displayText: 'Key2', hint: '', siType: 'env_var' },
-        ],
-      } };
-    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
-
-    const result = (bridge as any).tryParsePendingResponse(item, 'val1\nval2');
-    expect(result?.kind).toBe('generic'); expect((result as any)?.name).toBe('sensitive_info_operation');
-    expect(result?.data?.results).toEqual([
-      { type: 'provided', key: 'K1', value: 'val1' },
-      { type: 'provided', key: 'K2', value: 'val2' },
-    ]);
-
-    const cancelResult = (bridge as any).tryParsePendingResponse(item, 'c');
-    expect(cancelResult?.kind).toBe('generic');
-    expect(cancelResult?.name).toBe('sensitive_info_operation');
-    expect((cancelResult as any)?.data?.results).toEqual([
-      { type: 'collect_skipped', key: 'K1', reason: '用户取消执行' },
-      { type: 'collect_skipped', key: 'K2', reason: '用户取消执行' },
-    ]);
-  });
-
-  it('tryParsePendingResponse sensitive_info_operation delete', async () => {
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u1'), 'act-1');
-
-    const event: any = { requestId: 'req-1', operation: {
-        type: 'delete',
-        items: [
-          { key: 'K1', displayText: 'Key1', id: 'id1', siType: 'secret' },
-        ],
-      } };
-    const item = (bridge as any).createPendingItem(channelId('chat-a'), userId('u1'), 'sensitive_info_operation', event);
-
-    const result = (bridge as any).tryParsePendingResponse(item, 'y');
-    expect(result?.kind).toBe('generic');
-    expect(result?.name).toBe('sensitive_info_operation');
-    expect((result as any)?.data?.results).toEqual([{ type: 'deleted', id: 'id1' }]);
+    expect((bridge as any).tryParsePendingResponse(item, '99')).toEqual(genericResponse('question', { type: 'answer', content: '99' }));
   });
 
   // ── Thinking and tool-use indicators ────────────────────────────────────
@@ -1362,8 +1299,8 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'think', data: { requestId: 't1' } },
+      activity: { id: 'act-1' },
+      event: { name: 'think', data: {} },
     } as any);
 
     const thinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
@@ -1396,12 +1333,12 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'think', data: { requestId: 't1' } },
+      activity: { id: 'act-1' },
+      event: { name: 'think', data: {} },
     } as any);
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'think', data: { requestId: 't2' } },
+      activity: { id: 'act-1' },
+      event: { name: 'think', data: {} },
     } as any);
 
     const thinkCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('正在思考'));
@@ -1434,13 +1371,13 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'think', data: { requestId: 't1' } },
+      activity: { id: 'act-1' },
+      event: { name: 'think', data: {} },
     } as any);
 
     cloudSend.mockClear();
 
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'result' } } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'content_part', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'result' } } } } as any);
 
     const contentCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text === 'result');
     expect(contentCall).toBeTruthy();
@@ -1474,15 +1411,15 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'think', data: { requestId: 't1' } },
+      activity: { id: 'act-1' },
+      event: { name: 'think', data: {} },
     } as any);
 
     cloudSend.mockClear();
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
+      activity: { id: 'act-1' },
+      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
@@ -1517,8 +1454,8 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
+      activity: { id: 'act-1' },
+      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1551,12 +1488,12 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
+      activity: { id: 'act-1' },
+      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
     } as any);
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'tool_use', data: { requestId: 'tu2', toolName: 'bash', arguments: '{}' } },
+      activity: { id: 'act-1' },
+      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
     } as any);
 
     const toolCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1570,14 +1507,14 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
-      event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } },
+      activity: { id: 'act-1' },
+      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
     } as any);
 
     cloudSend.mockClear();
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
     } as any);
 
@@ -1592,7 +1529,7 @@ describe('Bridge', () => {
     (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
     } as any);
 
@@ -1625,10 +1562,10 @@ describe('Bridge', () => {
     verboseBridge.markEstablished();
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'think', data: { requestId: 't1' } } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'tool_use', data: { requestId: 'tu1', toolName: 'bash', arguments: '{}' } } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: 'act-1', event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } } });
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'think', data: {} } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } } });
 
     const texts = cloudSend.mock.calls
       .filter((c) => c[1]?.type === 'text')
@@ -1656,7 +1593,7 @@ describe('Bridge', () => {
     (bridge as any).cloud.releaseTypingIndicator.mockClear();
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } },
     });
 

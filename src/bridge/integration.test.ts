@@ -232,7 +232,7 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: {
         name: 'content_delta', data: { round: 'r1', pair: 'p1',
         payload: { type: 'text', text: 'streaming text' } },
@@ -277,7 +277,7 @@ describe('Bridge integration', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1', event: {
+      activity: { id: 'act-1' }, event: {
         name: 'content_part', data: { round: 'r1', pair: 'p1',
         payload: {
           type: 'image',
@@ -325,7 +325,7 @@ describe('Bridge integration', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     const response = await verboseBridge.handleEvent('act-1', {
-      activity: 'act-1', event: {
+      activity: { id: 'act-1' }, event: {
         name: 'complete',
         data: { assistantReply: [{ type: 'text', text: 'final answer' }] },
       },
@@ -340,7 +340,7 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     await bridge.handleEvent('act-1', {
-      activity: 'act-1', event: { name: 'notify', data: { requestId: 'n1', message: 'notification' } },
+      activity: { id: 'act-1' }, event: { name: 'notify', data: { message: 'notification' } },
     });
 
     expect(cloudSendMock).toHaveBeenCalledWith(chatA, { type: 'text', text: 'notification' });
@@ -368,7 +368,7 @@ describe('Bridge integration', () => {
 
     // All outbound events route to sessionChatId
     await bridge.handleEvent('act-a', {
-      activity: 'act-a',
+      activity: { id: 'act-a' },
       event: { name: 'content_delta', data: { round: 'r1', pair: 'p1', payload: { type: 'text', text: 'reply' } } },
     });
 
@@ -380,23 +380,21 @@ describe('Bridge integration', () => {
   it('L4: action_request blocks until resolvePending', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
-      activity: 'act-1',
-      requestId: 'req-1',
       toolName: 'bash',
       arguments: '{"command":"rm -rf /"}',
       actionId: 'action-1',
       description: 'Delete everything',
       alert: 'critical',
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     // Should have sent notification to cloud
     await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
 
     // Resolve the pending
-    bridge.resolvePending('req-1', genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'dangerous' }));
+    bridge.resolvePending('chat-a:u-sender', genericResponse('action', { type: 'reject', reason: 'dangerous' }));
 
     const response = await cmdPromise;
-    expect(response).toEqual(genericResponse('action', { requestId: 'req-1', type: 'reject', reason: 'dangerous' }));
+    expect(response).toEqual(genericResponse('action', { type: 'reject', reason: 'dangerous' }));
   });
 
   // ── L5: cloud.send failure cleans up pending ───────────────────────────
@@ -406,14 +404,12 @@ describe('Bridge integration', () => {
     cloudSendMock.mockRejectedValueOnce(new Error('network down'));
 
     const response = await bridge.handleCommand({ generic: { name: 'action_request', arguments: {
-      activity: 'act-1',
-      requestId: 'req-fail',
       toolName: 'tool',
       arguments: '{}',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward action_request to cloud' });
 
@@ -422,33 +418,18 @@ describe('Bridge integration', () => {
     expect(cloudCloseMock).toHaveBeenCalled();
   });
 
-  it('L5: sensitive_info_operation cloud.send failure → error response', async () => {
-    (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
-    cloudSendMock.mockRejectedValueOnce(new Error('timeout'));
-
-    const response = await bridge.handleCommand({ generic: { name: 'sensitive_info_operation', arguments: {
-      activity: 'act-1',
-      requestId: 'req-si',
-      operation: { type: 'collect', items: [{ key: 'API_KEY', displayText: 'API Key', hint: 'enter', siType: 'secret' }] },
-    } } });
-
-    expect(response).toEqual({ kind: 'error', code: 'send_failed', message: 'failed to forward sensitive_info_operation to cloud' });
-  });
-
   // ── close() ────────────────────────────────────────────────────────────
 
   it('close() clears mappings and rejects pending', async () => {
     (bridge as any).bindActivity(channelId('chat-a'), userId('u-sender'), 'act-1');
     // Start an action_request (will be pending)
     const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
-      activity: 'act-1',
-      requestId: 'req-close',
       toolName: 'tool',
       arguments: '{}',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     // Wait for action_request to be processed (async handleCommand)
     await vi.waitFor(() => expect(cloudSendMock).toHaveBeenCalled());
@@ -469,14 +450,12 @@ describe('Bridge integration', () => {
 
     // Agent sends action_request → pending
     const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
-      activity: 'act-1',
-      requestId: 'req-invoke',
       toolName: 'bash',
       arguments: '',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     // User replies 'y' via cloud message
     cloudMessagesIter.push(makeMessage(chatA, 'y'));
@@ -484,7 +463,7 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const response = await cmdPromise;
-    expect(response).toEqual(genericResponse('action', { requestId: 'req-invoke', type: 'approve' }));
+    expect(response).toEqual(genericResponse('action', { type: 'approve' }));
   });
 
   it('L6: invoke text with free text rejects action_request', async () => {
@@ -493,14 +472,12 @@ describe('Bridge integration', () => {
 
     // Agent sends action_request → pending
     const cmdPromise = bridge.handleCommand({ generic: { name: 'action_request', arguments: {
-      activity: 'act-1',
-      requestId: 'req-invalid',
       toolName: 'bash',
       arguments: '',
       actionId: 'a1',
       description: 'test',
       alert: 'info',
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     // Reset cloud send count to isolate this test
     cloudSendMock.mockClear();
@@ -511,7 +488,7 @@ describe('Bridge integration', () => {
     await bridge.run();
 
     const response = await cmdPromise;
-    expect(response).toEqual(genericResponse('action', { requestId: 'req-invalid', type: 'reject', reason: '太危险了' }));
+    expect(response).toEqual(genericResponse('action', { type: 'reject', reason: '太危险了' }));
   });
 
   it('L6: invoke text routes question numeric response', async () => {
@@ -519,18 +496,16 @@ describe('Bridge integration', () => {
     (bridge as any).bindActivity(chatA, userId('u-sender'), 'act-1');
 
     const cmdPromise = bridge.handleCommand({ generic: { name: 'question', arguments: {
-      activity: 'act-1',
-      requestId: 'req-q',
       question: 'Pick one',
       options: ['Red', 'Green', 'Blue'],
-    } } });
+    }, activity: { id: 'act-1' } } });
 
     cloudMessagesIter.push(makeMessage(chatA, '2'));
     cloudMessagesIter.stop();
     await bridge.run();
 
     const response = await cmdPromise;
-    expect(response).toEqual(genericResponse('question', { requestId: 'req-q', type: 'answer', content: 'Green' }));
+    expect(response).toEqual(genericResponse('question', { type: 'answer', content: 'Green' }));
   });
 
   // ── Media buffering ─────────────────────────────────────────────────────

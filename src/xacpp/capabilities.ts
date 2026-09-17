@@ -7,10 +7,60 @@ import type { Capabilities } from 'xacpp';
 
 export const XABOT_CAPABILITIES: Capabilities = {
   commands: [
-    { name: 'action_request' },
-    { name: 'question' },
-    { name: 'sensitive_info_operation' },
+    { name: 'action_request', dispatcher: 'bridge' },
+    {
+      name: 'question',
+      dispatcher: 'tool',
+      description: '向用户发起提问并获取回答。需要用户确认信息或做出选择时使用此工具。所有提问，系统都会提供默认的"其他"选项，严禁重复提供。',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: '问题内容（必填）',
+          },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            default: [],
+            description: '选项列表，空数组表示无预设选项，UI 会默认提供"是"、"否"、"其他"',
+          },
+        },
+        required: ['question'],
+      },
+    },
     { name: 'message' },
+    {
+      name: 'report_to_user',
+      dispatcher: 'tool',
+      description: '向用户提交报告的唯一通道。仅在需要向用户报告时主动调用：一轮任务（round）结束前必须至少调用一次。只发送报告本身——结论、结果、交付物；严禁通过本工具发送中间行动过程、思考过程或任何非报告内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: {
+            type: 'array',
+            description: '报告内容分片，按展示顺序排列。每个元素只带一个字段：text（文本内容）或 image/audio/video/file（本机文件绝对路径）',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string', description: '文本内容' },
+                image: { type: 'string', description: '图片文件绝对路径' },
+                audio: { type: 'string', description: '音频文件绝对路径' },
+                video: { type: 'string', description: '视频文件绝对路径' },
+                file: { type: 'string', description: '文件绝对路径（文档/压缩包等任意类型）' },
+              },
+            },
+          },
+        },
+        required: ['content'],
+      },
+      evaluationPolicy: {
+        requireToolCall: {
+          require: 'report_to_user',
+          on_failure: '请先调用 report_to_user 提交本轮报告',
+        },
+      },
+    },
   ],
   produceEvents: [],
   acceptEvents: [

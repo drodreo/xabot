@@ -41,6 +41,10 @@ export async function run(bridge: Bridge, peer: XacppPeer): Promise<void> {
   process.on('SIGINT', () => onSignal('SIGINT'));
   process.on('SIGTERM', () => onSignal('SIGTERM'));
 
+  // 父进程兜底：父进程死亡（含 SIGKILL/崩溃）必然断开 stdin pipe，
+  // close 事件即最后防线——任何父进程退出形态都不残留本进程
+  process.stdin.on('close', () => onSignal('stdin-close'));
+
   log.info('Bridge mode started');
 
   await bridge.run();

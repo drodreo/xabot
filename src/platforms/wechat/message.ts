@@ -138,8 +138,8 @@ function buildMediaItem(
     case 'audio':
     case 'file': {
       const name = (content.type === 'file' ? content.name : undefined)
-        || content.source.remoteUrl.split('/').pop()
-        || content.source.localUri.split('/').pop()
+        || content.source?.remoteUrl?.split('/').pop()
+        || content.source?.localUri?.split('/').pop()
         || 'file';
       return {
         type: 4,
@@ -173,6 +173,46 @@ export function fromMessageContentWithUpload(
       message_state: 2,
       context_token: contextToken,
       item_list: [buildMediaItem(content, uploadResult)],
+    },
+    base_info: { channel_version: '1' },
+  };
+}
+
+/**
+ * Build a single aggregated WeChat send request from multiple content parts
+ * (one logical message, one physical send). Media parts consume their upload
+ * result from `uploadResults`; parts without one fall back to text placeholders.
+ * Item order follows parts order. Audio keeps the existing "upload as file"
+ * semantics (type 4 file_item).
+ */
+export function fromMessagePartsAggregated(
+  toUserId: string,
+  parts: MessageContent[],
+  contextToken: string,
+  uploadResults: Map<MessageContent, WechatUploadResult>,
+): WeixinSendRequest {
+  const itemList: WeixinOutgoingItem[] = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      itemList.push({ type: 1, text_item: { text: part.text } });
+      continue;
+    }
+    const uploadResult = uploadResults.get(part);
+    if (uploadResult) {
+      itemList.push(buildMediaItem(part, uploadResult));
+    } else {
+      itemList.push({ type: 1, text_item: { text: contentToText(part) } });
+    }
+  }
+  return {
+    msg: {
+      from_user_id: '',
+      to_user_id: toUserId,
+      client_id: randomUUID(),
+      message_type: 2,
+      message_state: 2,
+      context_token: contextToken,
+      item_list: itemList,
     },
     base_info: { channel_version: '1' },
   };

@@ -12,7 +12,7 @@ describe('XabotSessionHandler', () => {
   it('onEvent returns acknowledge when no bridge set', async () => {
     const handler = new XabotSessionHandler('test-session');
     const response = await handler.onEvent({
-      activity: 'act-1',
+      activity: { id: 'act-1' },
       event: { name: 'info', data: { title: 'test', content: 'test content' } },
     });
     expect(response).toEqual({ kind: 'generic', name: 'acknowledge', data: null });
@@ -37,7 +37,7 @@ describe('XabotSessionHandler', () => {
     const bridge = { handleEvent } as unknown as Bridge;
     handler.setBridge(bridge);
 
-    const event = { activity: 'act-1', event: { name: 'info', data: { title: 'test', content: 'content' } } };
+    const event = { activity: { id: 'act-1' }, event: { name: 'info', data: { title: 'test', content: 'content' } } };
     const response = await handler.onEvent(event);
 
     expect(handleEvent).toHaveBeenCalledWith('act-1', event);

@@ -1,4 +1,4 @@
-import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler, ContentPart, XacppEvent, XacppSession } from 'xacpp';
+import type { XacppCommand, XacppActivityEvent, XacppResponse, XacppSessionHandler, ContentPart, XacppEvent, XacppSession, ActivityInfo } from 'xacpp';
 import { acknowledge, genericResponse, genericCommand, commandName, newEvent } from 'xacpp';
 import { StdinRouter } from './stdin-router.js';
 import { createLogger } from '../core/logger.js';
@@ -91,7 +91,8 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       this.activityId = crypto.randomUUID();
       log.info('activity created: %s', this.activityId);
       log.info('new_activity → activity_ready, agent=chat');
-      return genericResponse("activity_ready", { activity: this.activityId, agent: 'chat' });
+      const info: ActivityInfo = { activity: this.activityId, agent: 'chat' };
+      return genericResponse("activity_ready", info);
     }
 
     if (name === 'invoke_activity') {
@@ -142,7 +143,8 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       this.activityId = input;
       log.info('resuming activity: %s', input);
       log.info('last_activity → activity_ready, agent=chat');
-      return genericResponse("activity_ready", { activity: input, agent: 'chat' });
+      const info: ActivityInfo = { activity: input, agent: 'chat' };
+      return genericResponse("activity_ready", info);
     }
 
     log.warn('unknown command: %s → acknowledge', name);
@@ -156,7 +158,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
 
   private async sendEvent(session: XacppSession, event: XacppEvent): Promise<XacppResponse> {
     if (!this.activityId) return acknowledge();
-    return session.requestEvent({ activity: this.activityId, event });
+    return session.requestEvent({ activity: { id: this.activityId }, event });
   }
 
   /**
@@ -189,21 +191,18 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         log.warn('no active activity, ignoring /action');
         return;
       }
-      const requestId = crypto.randomUUID();
       log.info('action_request [act-%s] tool=%s desc=%s', this.activityId, parsed.toolName, parsed.description);
       const response = await session.requestCommand(genericCommand("action_request", {
-        activity: this.activityId,
-        requestId,
         toolName: parsed.toolName,
         arguments: '',
         actionId: crypto.randomUUID(),
         description: parsed.description,
         alert: 'info',
         intent: parsed.description,
-      }));
+      }, { id: this.activityId }));
       if (response.kind === 'generic' && response.name === 'action') {
-        const data = response.data as { requestId: string; type: string; reason?: string };
-        log.info('action_response [act-%s] req=%s result=%s%s', this.activityId, data.requestId, data.type,
+        const data = response.data as { type: string; reason?: string };
+        log.info('action_response [act-%s] result=%s%s', this.activityId, data.type,
           data.type === 'reject' ? ` reason=${data.reason}` : '');
       } else {
         log.info('action_response [act-%s] %s', this.activityId ?? 'none', response.kind);
@@ -217,18 +216,15 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
         log.warn('no active activity, ignoring /question');
         return;
       }
-      const requestId = crypto.randomUUID();
       log.info('question [act-%s] q=%s options=%s', this.activityId, parsed.question, parsed.options?.join(',') ?? '');
       const response = await session.requestCommand(genericCommand("question", {
-        activity: this.activityId,
-        requestId,
         question: parsed.question,
         options: parsed.options ?? [],
-      }));
+      }, { id: this.activityId }));
       if (response.kind === 'generic' && response.name === 'question') {
-        const data = response.data as { requestId: string; type: string; content?: string };
-        log.info('question_response [act-%s] req=%s type=%s content=%s',
-            this.activityId, data.requestId, data.type,
+        const data = response.data as { type: string; content?: string };
+        log.info('question_response [act-%s] type=%s content=%s',
+            this.activityId, data.type,
             data.type === 'answer' ? data.content : '(skip)');
       } else {
         log.info('question_response [act-%s] %s', this.activityId ?? 'none', response.kind);

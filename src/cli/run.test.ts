@@ -24,7 +24,6 @@ function mockBridge(): Bridge & { closed: boolean; runCalled: boolean } {
     markEstablished: vi.fn(),
     handleCommand: vi.fn(),
     handleEvent: vi.fn(),
-    resolvePending: vi.fn(),
   } as unknown as Bridge & { closed: boolean; runCalled: boolean };
 }
 

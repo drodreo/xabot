@@ -27,6 +27,6 @@ export class XabotSessionHandler implements XacppSessionHandler {
 
   async onEvent(event: XacppActivityEvent): Promise<XacppResponse> {
     if (!this.bridge) return acknowledge();
-    return this.bridge.handleEvent(event.activity, event);
+    return this.bridge.handleEvent(event.activity.id, event);
   }
 }

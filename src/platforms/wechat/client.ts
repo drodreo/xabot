@@ -2,8 +2,8 @@ import type { PlatformClient } from '../../core/client.js';
 import type { ChannelId, MessageId, UserId, Message, MessageContent } from '../../core/types.js';
 import { StreamCapability, messageId, channelId, userId } from '../../core/types.js';
 import { XabotError } from '../../core/error.js';
-import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, processInboundMedia, type WeixinMessage } from './message.js';
-import { uploadMedia } from './upload.js';
+import { toStandardMessage, fromMessageContent, fromMessageContentWithUpload, fromMessagePartsAggregated, processInboundMedia, type WeixinMessage } from './message.js';
+import { uploadMedia, type WechatUploadResult } from './upload.js';
 import { randomBytes } from 'node:crypto';
 import { createLogger } from '../../core/logger.js';
 const log = createLogger('WechatClient');
@@ -230,6 +230,40 @@ export class WechatClient implements PlatformClient {
     }
 
     const body = fromMessageContent(chatId, effective, contextToken);
+    return this._sendBody(body);
+  }
+
+  /**
+   * Send multiple content parts as one logical message (single physical send).
+   * Media parts with a localUri are uploaded first (upload failure degrades
+   * that part to a text placeholder without interrupting the rest); all items
+   * are then merged into one item_list and sent via a single request.
+   */
+  async sendAggregated(chatId: ChannelId, parts: MessageContent[]): Promise<MessageId> {
+    if (!this.connected) {
+      throw XabotError.platform('WechatClient: not connected');
+    }
+
+    const contextToken = this.contextTokenStore.get(chatId) ?? '';
+    const uploadResults = new Map<MessageContent, WechatUploadResult>();
+
+    for (const part of parts) {
+      if (part.type === 'text') continue;
+      if (!part.source?.localUri) {
+        log.warn('sendAggregated: %s has no localUri, sending placeholder', part.type);
+        continue;
+      }
+      try {
+        const mediaType = part.type === 'audio' ? 'file' : part.type;
+        const result = await uploadMedia(this.baseUrl, this.token, this.xWechatUin, part.source.localUri, mediaType, chatId as string);
+        uploadResults.set(part, result);
+        log.info('upload success: %s (chatId=%s)', part.type, chatId);
+      } catch (err) {
+        log.warn('sendAggregated: upload failed, fallback to text: %s', err);
+      }
+    }
+
+    const body = fromMessagePartsAggregated(chatId, parts, contextToken, uploadResults);
     return this._sendBody(body);
   }
 

@@ -4,6 +4,15 @@
 
 xabot is a bridge between downstream Agents and cloud IM platforms. It connects to Agents via the XACPP protocol and to cloud platforms (Feishu/WeChat) via platform SDKs, enabling bidirectional message routing.
 
+## Architecture
+
+- **XACPP role**: in IM bridge mode (cli/run.ts) xabot is the Responder (passive side) — the peer Agent initiates; terminal chat mode (cli/chat.ts) is the exception, where xabot acts as Initiator toward the downstream Agent
+- **Message routing model**: `chatId → user → activity → message`
+- **WeChat single-user fallback**: `chatId == senderId == toUserId`
+- **Bridge routing**: `chatUserToActivity` + `activityToTarget`
+- **Establish handshake (three steps)**: `credentials: null` → `challenge_required` → `confirm` → session established
+- **Event routing**: `XacppActivityEvent.activity → activityId → chatId` mapping
+
 ## Tech Stack
 
 - TypeScript, ESM mode
