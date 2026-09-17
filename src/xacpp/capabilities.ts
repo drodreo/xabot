@@ -33,7 +33,7 @@ export const XABOT_CAPABILITIES: Capabilities = {
     {
       name: 'report_to_user',
       dispatcher: 'tool',
-      description: '向用户提交报告的唯一通道。仅在需要向用户报告时主动调用：一轮任务（round）结束前必须至少调用一次。只发送报告本身——结论、结果、交付物；严禁通过本工具发送中间行动过程、思考过程或任何非报告内容。',
+      description: '回复用户的唯一通道。一轮任务（round）结束前必须至少调用一次。只发送面向用户的最终回复本身；严禁通过本工具发送中间行动过程或思考过程。',
       parameters: {
         type: 'object',
         properties: {
@@ -57,7 +57,8 @@ export const XABOT_CAPABILITIES: Capabilities = {
       evaluationPolicy: {
         requireToolCall: {
           require: 'report_to_user',
-          on_failure: '请先调用 report_to_user 提交本轮报告',
+          on_failure:
+            '你本轮尚未调用 report_to_user。注意：用户看不到你在 report_to_user 工具调用之外输出的任何内容——你此前的所有输出都未送达用户。请梳理自最后一次用户输入以来你给出的全部内容，重新组织成一段完整的回复，像首次回复用户一样，通过 report_to_user 发送。',
         },
       },
     },
