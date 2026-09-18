@@ -33,6 +33,7 @@ export const XABOT_CAPABILITIES: Capabilities = {
     {
       name: 'report_to_user',
       dispatcher: 'tool',
+      extraScopes: ['compact'],
       description: '回复用户的唯一通道。一轮任务（round）结束前必须至少调用一次。只发送面向用户的最终回复本身；严禁通过本工具发送中间行动过程或思考过程。',
       parameters: {
         type: 'object',
