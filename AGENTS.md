@@ -55,6 +55,7 @@ Uninstall: `npm uninstall -g xabot`
 
 ## Notes
 
+- All comments and commit messages in English
 - All subcommands' platform message streams (Feishu WS / WeChat long-polling) are long-lived connections; process exit relies on `process.exit()` (Feishu SDK has a `setInterval` leak)
 - Human-readable output goes to stderr; structured results (JSON) go to stdout
 - Bridge chatId is obtained dynamically via the Establish handshake — no `--chat-ids` CLI parameter needed
