@@ -499,7 +499,10 @@ export class Bridge {
       this.reportedBuckets.add(bucket);
     }
     const remaining = Bridge.REPORT_MAX_CALLS_PER_ROUND - (used + 1);
-    return genericResponse(responderName, { remaining, message: `内容已投递，到下一次用户输入前你还可以报告 ${remaining} 次` });
+    const message = responderName === 'report_to_user'
+      ? `内容已投递。如果没有其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出；如仍有内容需要呈报，到下一次用户输入前你还可以报告 ${remaining} 次`
+      : `内容已投递，到下一次用户输入前你还可以报告 ${remaining} 次`;
+    return genericResponse(responderName, { remaining, message });
   }
 
   /** Replace file parts hitting the executable blacklist with text placeholders; originals are never read or forwarded. Missing wire fields are treated as non-blocking. */

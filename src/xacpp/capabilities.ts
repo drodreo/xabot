@@ -59,7 +59,7 @@ export const XABOT_CAPABILITIES: Capabilities = {
         requireToolCall: {
           require: 'report_to_user',
           on_failure:
-            '你本轮尚未调用 report_to_user。注意：用户看不到你在 report_to_user 工具调用之外输出的任何内容——你此前的所有输出都未送达用户。请梳理自最后一次用户输入以来你给出的全部内容，重新组织成一段完整的回复，像首次回复用户一样，通过 report_to_user 发送。',
+            '你本轮尚未调用 report_to_user。注意：用户看不到你在 report_to_user 工具调用之外输出的任何内容——你此前的所有输出都未送达用户。请梳理自最后一次用户输入以来你给出的全部内容，重新组织成一段完整的回复，像首次回复用户一样，通过 report_to_user 发送。发送后如无其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出。',
         },
       },
     },

@@ -166,7 +166,7 @@ describe('Bridge report_to_user', () => {
       const response = await bridge.handleCommand(reportCommand(`report ${i}`, 'act-a'));
       expect(response).toEqual(genericResponse('report_to_user', {
         remaining: 5 - i,
-        message: `内容已投递，到下一次用户输入前你还可以报告 ${5 - i} 次`,
+        message: `内容已投递。如果没有其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出；如仍有内容需要呈报，到下一次用户输入前你还可以报告 ${5 - i} 次`,
       }));
     }
 
@@ -230,7 +230,7 @@ describe('Bridge report_to_user', () => {
     const response = await bridge.handleCommand(reportCommand('new round', 'act-a'));
     expect(response).toEqual(genericResponse('report_to_user', {
       remaining: 4,
-      message: `内容已投递，到下一次用户输入前你还可以报告 4 次`,
+      message: `内容已投递。如果没有其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出；如仍有内容需要呈报，到下一次用户输入前你还可以报告 4 次`,
     }));
   });
 
@@ -333,7 +333,7 @@ describe('Bridge report_to_user', () => {
     // type-less but text-bearing part is delivered as text (model may omit type)
     expect(cloudSend).toHaveBeenCalledWith('chat-a', { type: 'text', text: 'no type field' });
     expect(response).toEqual(
-      genericResponse('report_to_user', { remaining: 4, message: '内容已投递，到下一次用户输入前你还可以报告 4 次' }),
+      genericResponse('report_to_user', { remaining: 4, message: '内容已投递。如果没有其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出；如仍有内容需要呈报，到下一次用户输入前你还可以报告 4 次' }),
     );
   });
 
@@ -357,7 +357,7 @@ describe('Bridge report_to_user', () => {
       name: 'report.pdf',
     });
     expect(response).toEqual(
-      genericResponse('report_to_user', { remaining: 4, message: '内容已投递，到下一次用户输入前你还可以报告 4 次' }),
+      genericResponse('report_to_user', { remaining: 4, message: '内容已投递。如果没有其他内容需要呈报，本轮可以就此结束，不必再给出进一步的输出；如仍有内容需要呈报，到下一次用户输入前你还可以报告 4 次' }),
     );
   });
 });
