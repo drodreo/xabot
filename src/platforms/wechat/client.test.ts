@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WechatClient, type WechatConfig } from './client.js';
-import { StreamCapability, channelId } from '../../core/types.js';
+import { StreamCapability, channelId, userId } from '../../core/types.js';
 import { processInboundMedia } from './message.js';
 
 vi.mock('./message.js', async (importOriginal) => {
@@ -579,6 +579,108 @@ describe('WechatClient', () => {
       expect((client as any).token).toBe('renewed_tok');
       expect((client as any).getUpdatesBuf).toBe('');
       expect((client as any).connected).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Typing indicator
+  // --------------------------------------------------------------------------
+
+  describe('typing indicator', () => {
+    const chat = channelId('user_alice');
+    const sender = userId('user_alice');
+
+    /** Mock getconfig/sendtyping; returns recorded calls in order. */
+    function mockTypingApi(opts?: { failNextSendTyping?: boolean }) {
+      const calls: { path: string; body: Record<string, unknown> }[] = [];
+      let failNext = opts?.failNextSendTyping ?? false;
+      mockFetch.mockImplementation(async (url: string, init: { body: string }) => {
+        const path = new URL(url).pathname;
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        calls.push({ path, body });
+        if (path.endsWith('/getconfig')) return makeJsonResponse({ typing_ticket: 'ticket_1' });
+        if (failNext) {
+          failNext = false;
+          throw new Error('network down');
+        }
+        return makeJsonResponse({});
+      });
+      return calls;
+    }
+
+    const sendtypingCalls = (calls: { path: string }[]) =>
+      calls.filter((c) => c.path.endsWith('/sendtyping'));
+
+    it('setTypingIndicator fetches ticket and sends status=1', async () => {
+      const calls = mockTypingApi();
+      const client = new WechatClient(makeConfig());
+
+      await client.setTypingIndicator(chat, sender);
+
+      expect(calls.map((c) => c.path)).toEqual(['/ilink/bot/getconfig', '/ilink/bot/sendtyping']);
+      expect(calls[1]!.body).toMatchObject({
+        ilink_user_id: 'user_alice',
+        typing_ticket: 'ticket_1',
+        status: 1,
+      });
+    });
+
+    it('caches typing ticket across sends', async () => {
+      const calls = mockTypingApi();
+      const client = new WechatClient(makeConfig());
+
+      await client.setTypingIndicator(chat, sender);
+      await client.releaseTypingIndicator(chat, sender);
+
+      expect(calls.filter((c) => c.path.endsWith('/getconfig'))).toHaveLength(1);
+    });
+
+    it('refresh within throttle window sends no request', async () => {
+      const calls = mockTypingApi();
+      const client = new WechatClient(makeConfig());
+
+      await client.setTypingIndicator(chat, sender);
+      await client.refreshTypingIndicator(chat, sender);
+      await client.refreshTypingIndicator(chat, sender);
+
+      expect(sendtypingCalls(calls)).toHaveLength(1);
+    });
+
+    it('refresh after throttle window re-sends', async () => {
+      const calls = mockTypingApi();
+      const client = new WechatClient(makeConfig());
+
+      await client.setTypingIndicator(chat, sender);
+      (client as any).typingLastSentAt.set('user_alice', Date.now() - 5000);
+      await client.refreshTypingIndicator(chat, sender);
+
+      expect(sendtypingCalls(calls)).toHaveLength(2);
+    });
+
+    it('failed refresh does not consume the window — next event retries', async () => {
+      const calls = mockTypingApi({ failNextSendTyping: true });
+      const client = new WechatClient(makeConfig());
+
+      await expect(client.refreshTypingIndicator(chat, sender)).rejects.toThrow('network down');
+      await client.refreshTypingIndicator(chat, sender);
+
+      expect(sendtypingCalls(calls)).toHaveLength(2);
+    });
+
+    it('release always sends status=2 and resets the throttle window', async () => {
+      const calls = mockTypingApi();
+      const client = new WechatClient(makeConfig());
+
+      await client.setTypingIndicator(chat, sender);
+      await client.releaseTypingIndicator(chat, sender);
+
+      const sends = sendtypingCalls(calls);
+      expect(sends).toHaveLength(2);
+      expect(sends[1]!.body.status).toBe(2);
+
+      // Window cleared: immediate refresh must send again.
+      await client.refreshTypingIndicator(chat, sender);
+      expect(sendtypingCalls(calls)).toHaveLength(3);
     });
   });
 });

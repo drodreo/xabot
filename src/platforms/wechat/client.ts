@@ -23,6 +23,9 @@ const DEFAULT_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const DEFAULT_POLL_TIMEOUT_MS = 35_000;
 const MAX_RETRY_DELAY_MS = 30_000;
 const TYPING_TICKET_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+// The server-side typing lease lasts ~5s per sendtyping call; refresh at most
+// once per 4s window (1s margin for network latency).
+const TYPING_REFRESH_THROTTLE_MS = 4_000;
 
 /**
  * WeChat iLink Bot platform client using HTTP long polling.
@@ -45,6 +48,7 @@ export class WechatClient implements PlatformClient {
   private readonly messageBuffer: Message[] = [];
   private messageResolve: ((msg: Message) => void) | null = null;
   private readonly typingTickets = new Map<string, { ticket: string; expiresAt: number }>();
+  private readonly typingLastSentAt = new Map<string, number>();
 
   private connected = false;
   private abortCtrl: AbortController | null = null;
@@ -364,23 +368,35 @@ export class WechatClient implements PlatformClient {
 
   private async sendTypingStatus(userId: string, status: 1 | 2): Promise<void> {
     const ticket = await this.fetchTypingTicket(userId);
-    await this.post('/ilink/bot/sendtyping', {
+    const res = await this.post('/ilink/bot/sendtyping', {
       ilink_user_id: userId,
       typing_ticket: ticket,
       status,
     });
+    if (!res.ok) throw new Error(`sendtyping failed: HTTP ${res.status}`);
   }
 
   async setTypingIndicator(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+    // Round start: always light up the indicator.
     await this.sendTypingStatus(senderId as string, 1);
+    this.typingLastSentAt.set(senderId as string, Date.now());
   }
 
   async refreshTypingIndicator(_chatId: ChannelId, senderId: UserId): Promise<void> {
-    await this.sendTypingStatus(senderId as string, 1);
+    // Keepalive dedupe: events renew the 5s lease; coalesce to one request
+    // per throttle window. On failure the stamp is not updated, so the next
+    // event retries immediately.
+    const key = senderId as string;
+    const last = this.typingLastSentAt.get(key);
+    if (last !== undefined && Date.now() - last < TYPING_REFRESH_THROTTLE_MS) return;
+    await this.sendTypingStatus(key, 1);
+    this.typingLastSentAt.set(key, Date.now());
   }
 
   async releaseTypingIndicator(_chatId: ChannelId, senderId: UserId, _messageId?: MessageId): Promise<void> {
+    // Active extinguish: not subject to throttling.
     await this.sendTypingStatus(senderId as string, 2);
+    this.typingLastSentAt.delete(senderId as string);
   }
 
   async close(): Promise<void> {
@@ -395,5 +411,6 @@ export class WechatClient implements PlatformClient {
     this.messageBuffer.length = 0;
     this.contextTokenStore.clear();
     this.typingTickets.clear();
+    this.typingLastSentAt.clear();
   }
 }
