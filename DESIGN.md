@@ -18,7 +18,7 @@ Cloud IM ←→ xabot ←→ Downstream Agent (XACPP)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `xacpp` | ^0.3.1 | XACPP protocol implementation, connects downstream Agent |
+| `xacpp` | ^1.2.1 | XACPP protocol implementation, connects downstream Agent |
 | `@larksuite/node-sdk` | latest | Feishu official SDK, WebSocket long connection + REST API |
 
 ## 3. Project Structure
@@ -29,29 +29,39 @@ xabot/
 ├── tsconfig.json
 ├── src/
 │   ├── index.ts              # Public entry point
+│   ├── i18n/
+│   │   └── index.ts          # i18n message translation (x-agent i18n:// keys)
 │   ├── core/
 │   │   ├── types.ts          # Standard message types (Message, ChannelId, UserId)
 │   │   ├── client.ts         # Platform Client interface
 │   │   ├── error.ts          # Structured error types
+│   │   ├── logger.ts         # stderr-only logger (stdout is the frame pipe)
+│   │   ├── fs-utils.ts       # Temp file helpers (saveTemp / safeUnlink)
 │   │   └── pairing.ts        # Pairing code flow
 │   ├── xacpp/
+│   │   ├── capabilities.ts   # Shared Responder capabilities declaration
 │   │   ├── establish-handler.ts      # XACPP EstablishHandler implementation
 │   │   ├── session-handler.ts        # XACPP SessionHandler (Responder side)
-│   │   └── initiator-session-handler.ts # XACPP SessionHandler (Initiator side, chat subcommand)
+│   │   ├── initiator-session-handler.ts # XACPP SessionHandler (Initiator side, chat subcommand)
+│   │   └── stdin-router.ts   # stdin line router for interactive chat commands
 │   ├── platforms/
 │   │   ├── feishu/
 │   │   │   ├── client.ts     # Feishu Client implementation
-│   │   │   └── message.ts    # Feishu message ↔ standard message conversion
+│   │   │   ├── message.ts    # Feishu message ↔ standard message conversion
+│   │   │   └── upload.ts     # Media upload (image/file)
 │   │   └── wechat/
 │   │       ├── client.ts     # WeChat Client implementation
-│   │       └── message.ts    # WeChat message ↔ standard message conversion
+│   │       ├── crypto.ts     # WeChat crypto helpers
+│   │       ├── login.ts      # QR-code login flow
+│   │       ├── message.ts    # WeChat message ↔ standard message conversion
+│   │       └── upload.ts     # Media upload
 │   ├── bridge/
-│   │   └── index.ts          # Bridge: cloud ↔ XACPP message routing
+│   │   ├── index.ts          # Bridge: cloud ↔ XACPP message routing
+│   │   └── input-parser.ts   # chat-mode stdin command parsing (/new /compact /cancel)
 │   └── cli/
 │       ├── index.ts          # CLI entry point (commander)
-│       ├── discover.ts       # discover subcommand
-│       ├── listen.ts         # listen subcommand
-│       ├── send.ts           # send subcommand
+│       ├── feishu.ts         # feishu subcommand (platform credentials)
+│       ├── wechat.ts         # wechat subcommand (platform credentials)
 │       ├── health.ts         # health subcommand
 │       ├── run.ts            # run subcommand (Bridge mode)
 │       └── chat.ts           # chat subcommand (Initiator + Responder in-process)
@@ -93,7 +103,7 @@ class Bridge {
 ### 4.3 XACPP Protocol Layer
 
 ```
-Transport  Frame layer: JSONL envelope encode/decode + request-response ID correlation
+Transport  Frame layer: binary frame encode/decode + request-response ID correlation
   └─ Peer   Protocol endpoint: state machine + establish/session routing
        └─ Session  Logical session: created after establish, holds transport reference
             └─ Activity  Activity context: one-to-one mapped with chatId
@@ -122,7 +132,7 @@ Downstream Agent call: xabot run --platform feishu --app-id X --app-secret Y
 ├─ All config passed via CLI arguments, xabot does not persist any config
 ├─ Platform Client.connect() (Feishu WebSocket / WeChat long-polling)
 ├─ Bridge.run() Phase 1: scan cloud messages for challenge (UUID format text)
-├─ XacppPeer.connect() (stdin/stdout JSONL)
+├─ XacppPeer.connect() (stdin/stdout binary frames)
 │   └─ Establish handshake: Initiator sends challenge → user sends to bot →
 │      Responder matches via cloud.messages() → obtain chatId as credentials
 ├─ Bridge.markEstablished() → switch to Phase 2
