@@ -82,7 +82,11 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
     async onEstablish() { throw new Error('Initiator does not accept inbound establish'); },
     async onEstablishConfirm() { throw new Error('Unexpected establish_confirm on Initiator'); },
   };
-  const initiatorPeer = new XacppPeer(XABOT_CAPABILITIES, initiatorTransport, { async onNegotiate(_effective: EffectiveCapabilities) {} }, dummyEstablishHandler);
+  // xacpp 1.2.x: the Initiator-side peer must hold a session — the peer wires
+  // it automatically on connect and backfills the negotiated identity after
+  // establish. Without it, establish() throws "requires a session".
+  const initiatorSession = new XacppSession();
+  const initiatorPeer = new XacppPeer(XABOT_CAPABILITIES, initiatorTransport, { async onNegotiate(_effective: EffectiveCapabilities) {} }, dummyEstablishHandler, initiatorSession);
   const router = new StdinRouter(process.stdin as unknown as Readable);
   const initiatorHandler = new InitiatorSessionHandler(router);
 
@@ -114,7 +118,11 @@ export async function chat(cloud?: PlatformClient, options?: ChatOptions): Promi
   }
 
   establishHandler.onEstablished((_t, sessionId, credentials: string) => {
-    const session = new XacppSession(responderTransport, sessionId, credentials);
+    // xacpp 1.2.x: session identity is no longer part of construction —
+    // bind it, then wire the responder session onto the live transport.
+    const session = new XacppSession();
+    session.bindIdentity(sessionId, credentials);
+    session.wire(responderTransport);
     bridge.setSession(session);
     bridge.markEstablished();
     log.info('establish completed, sessionId=%s, chatId=%s', sessionId, credentials);

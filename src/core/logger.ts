@@ -43,7 +43,9 @@ export function createLogger(module: string): Logger {
     const ts = new Date().toISOString().slice(11, 23);
     const msg = args.length > 0 ? format(fmt, args) : fmt;
     try {
-      process.stdout.write(`[${ts}] [${level.toUpperCase().padEnd(5)}] [${module}] ${msg}\n`);
+      // stderr only: stdout is the binary wire pipe under the stdio carrier
+      // (xacpp 1.x frame protocol); any log byte on stdout corrupts frames.
+      process.stderr.write(`[${ts}] [${level.toUpperCase().padEnd(5)}] [${module}] ${msg}\n`);
     } catch {
       // EPIPE: pipe closed (e.g. parent process exited), silently ignore
     }
@@ -56,3 +58,17 @@ export function createLogger(module: string): Logger {
     error: (fmt, ...args) => write('error', fmt, args),
   };
 }
+
+/**
+ * stderr-only logger shaped for third-party SDKs (e.g. @larksuiteoapi/node-sdk)
+ * that accept a `logger` injection. SDK defaults print to stdout via console.*,
+ * which corrupts the binary wire pipe under the stdio carrier — always inject
+ * this at SDK construction sites.
+ */
+export const sdkStderrLogger = {
+  error: (...msg: unknown[]) => { process.stderr.write(`[sdk-err] ${JSON.stringify(msg)}\n`); },
+  warn: (...msg: unknown[]) => { process.stderr.write(`[sdk-warn] ${JSON.stringify(msg)}\n`); },
+  info: (...msg: unknown[]) => { process.stderr.write(`[sdk-info] ${JSON.stringify(msg)}\n`); },
+  debug: (...msg: unknown[]) => { process.stderr.write(`[sdk-debug] ${JSON.stringify(msg)}\n`); },
+  trace: (...msg: unknown[]) => { process.stderr.write(`[sdk-trace] ${JSON.stringify(msg)}\n`); },
+};

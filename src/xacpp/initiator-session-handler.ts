@@ -56,7 +56,7 @@ function fileToContentPart(kind: MediaKind, filePath: string): ContentPart {
   const ext = abs.substring(abs.lastIndexOf('.')).toLowerCase();
   const mimeType = EXT_MIME[ext] ?? 'application/octet-stream';
   const source: import('xacpp').FileRef = { localUri: abs, remoteUrl: '', mimeType, sizeBytes: stat.size };
-  return { type: kind, source } as ContentPart;
+  return { type: kind, source, partType: 'default' } as ContentPart;
 }
 
 /**
@@ -172,7 +172,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
     // ── /complete: simulate invoke completion ─────────────────────────
     if (parsed.kind === 'complete') {
       const assistantReply: ContentPart[] = [];
-      if (parsed.text) assistantReply.push({ type: 'text', text: parsed.text });
+      if (parsed.text) assistantReply.push({ type: 'text', text: parsed.text, partType: 'default' });
       log.info('complete [act-%s]', this.activityId ?? 'none');
       if (this.activityId) {
         await this.sendEvent(session, newEvent('complete', { assistantReply }));
@@ -238,7 +238,7 @@ export class InitiatorSessionHandler implements XacppSessionHandler {
       part = fileToContentPart(parsed.mediaKind!, parsed.filePath!);
       log.info('%s: %s (%d bytes)', parsed.mediaKind, parsed.filePath, (part as any).source.sizeBytes);
     } else {
-      part = { type: 'text', text: parsed.text! };
+      part = { type: 'text', text: parsed.text!, partType: 'default' };
       log.info('invoke_activity [act-%s][> OUT]: %s', this.activityId ?? 'none', parsed.text);
     }
 

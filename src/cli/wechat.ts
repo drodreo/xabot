@@ -54,7 +54,11 @@ export function registerWechat(program: Command): void {
       });
 
       establishHandler.onEstablished((_t, sessionId, credentials) => {
-        const session = new XacppSession(transport, sessionId, credentials);
+        // xacpp 1.2.x: session identity is no longer part of construction —
+        // bind it, then wire the session onto the live transport.
+        const session = new XacppSession();
+        session.bindIdentity(sessionId, credentials);
+        session.wire(transport);
         bridge.setSession(session);
         bridge.markEstablished();
       });

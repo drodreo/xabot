@@ -644,7 +644,7 @@ describe('Bridge', () => {
 
     const response = await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Final answer' }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Final answer' }], canceled: false } },
     });
 
     expect(response).toEqual(acknowledge());
@@ -913,7 +913,7 @@ describe('Bridge', () => {
 
     const response = await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Here is the image:' }, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'Here is the image:' }, { type: 'image', source: { remoteUrl: 'https://example.com/result.png', localUri: '', mimeType: 'image/png', sizeBytes: 200 } }], canceled: false } },
     });
 
     expect(response).toEqual(acknowledge());
@@ -1039,7 +1039,7 @@ describe('Bridge', () => {
     // Agent sends complete — complete always sends assistantReply via _sendContentPart
     const response = await verboseBridge.handleEvent('act-e2e2', {
       activity: { id: 'act-e2e2' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'pong' }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'pong' }], canceled: false } },
     });
 
     expect(response).toEqual(acknowledge());
@@ -1419,7 +1419,7 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
+      event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } },
     } as any);
 
     const endThinkCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('思考用时'));
@@ -1455,7 +1455,7 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
+      event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } },
     } as any);
 
     const toolCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1489,11 +1489,11 @@ describe('Bridge', () => {
 
     await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
+      event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } },
     } as any);
     await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
+      event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } },
     } as any);
 
     const toolCalls = cloudSend.mock.calls.filter((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动中'));
@@ -1508,14 +1508,14 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } },
+      event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } },
     } as any);
 
     cloudSend.mockClear();
 
     await bridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
+      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1', contextWindow: 128000, tokenUsage: { id: 'u1', message: 'm', promptTokens: 10, completionTokens: 5, totalTokens: 15 } } },
     } as any);
 
     const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
@@ -1530,7 +1530,7 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } },
+      event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1', contextWindow: 128000, tokenUsage: { id: 'u1', message: 'm', promptTokens: 10, completionTokens: 5, totalTokens: 15 } } },
     } as any);
 
     const completeCall = cloudSend.mock.calls.find((c) => c[1]?.type === 'text' && c[1]?.text?.includes('行动用时'));
@@ -1563,9 +1563,9 @@ describe('Bridge', () => {
     (verboseBridge as any).bindActivity(chatA, userId('u1'), 'act-1');
 
     await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'think', data: {} } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'tool_use', data: { toolName: 'bash', arguments: '{}' } } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1' } } } as any);
-    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } } });
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'tool_use', data: { requestId: 'req-1', toolName: 'bash', index: 0, arguments: '{}', intent: 'run command' } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'pair_complete', data: { round: 'r1', pair: 'p1', contextWindow: 128000, tokenUsage: { id: 'u1', message: 'm', promptTokens: 10, completionTokens: 5, totalTokens: 15 } } } } as any);
+    await verboseBridge.handleEvent('act-1', { activity: { id: 'act-1' }, event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }], canceled: false } } });
 
     const texts = cloudSend.mock.calls
       .filter((c) => c[1]?.type === 'text')
@@ -1594,9 +1594,112 @@ describe('Bridge', () => {
 
     await bridge.handleEvent('act-1', {
       activity: { id: 'act-1' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'done' }], canceled: false } },
     });
 
     expect((bridge as any).cloud.releaseTypingIndicator).toHaveBeenCalled();
+  });
+
+  // ── xacpp 1.2.x event contract adaptation ───────────────────────────────
+
+  it('tool_result with isError=true surfaces a failure notice instead of forwarding parts', async () => {
+    const chatA = channelId('chat-a');
+    // No credentials: setSession derives no sessionChatId, so markEstablished
+    // does not emit the "connection established" notice — the assertion below
+    // counts only the tool_result failure notice.
+    bridge.setSession(mockSession(sessionRequestCommand, ''));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: { id: 'act-1' },
+      event: {
+        name: 'tool_result',
+        data: {
+          requestId: 'req-1', toolName: 'bash', index: 0,
+          parts: [{ type: 'text', text: 'stack trace details' }],
+          auto: false, status: 'error', isError: true,
+        },
+      } as any,
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '⚠️ 工具 bash 执行失败' });
+    // error parts are never forwarded
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('tool_result without isError (normal path) keeps send_file part forwarding', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, ''));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: { id: 'act-1' },
+      event: {
+        name: 'tool_result',
+        data: {
+          requestId: 'req-1', toolName: 'send_file', index: 0,
+          parts: [{ type: 'text', text: 'file content delivered' }],
+          auto: false, status: 'completed', isError: false,
+        },
+      } as any,
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'file content delivered' });
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('complete with canceled=true delivers a cancel notice, not assistantReply', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, ''));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: { id: 'act-1' },
+      event: {
+        name: 'complete',
+        data: { round: 'r1', assistantReply: [{ type: 'text', text: 'partial reply' }], abortReason: 'user interrupt', canceled: true },
+      } as any,
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '已取消本轮任务' });
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('complete with abortReason (not canceled) delivers an abort notice, not assistantReply', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, ''));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: { id: 'act-1' },
+      event: {
+        name: 'complete',
+        data: { round: 'r1', assistantReply: [{ type: 'text', text: 'half-written reply' }], abortReason: 'provider error', canceled: false },
+      } as any,
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: '本轮异常中止：provider error' });
+    expect(cloudSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('complete with full 1.2.x payload (canceled=false, no abortReason) delivers assistantReply', async () => {
+    const chatA = channelId('chat-a');
+    bridge.setSession(mockSession(sessionRequestCommand, 'chat-a'));
+    bridge.markEstablished();
+    (bridge as any).bindActivity(chatA, userId('u1'), 'act-1');
+
+    await bridge.handleEvent('act-1', {
+      activity: { id: 'act-1' },
+      event: {
+        name: 'complete',
+        data: { round: 'r1', assistantReply: [{ type: 'text', text: 'final answer' }], canceled: false },
+      } as any,
+    });
+
+    expect(cloudSend).toHaveBeenCalledWith(chatA, { type: 'text', text: 'final answer' });
   });
 });

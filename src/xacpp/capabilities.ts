@@ -2,6 +2,10 @@
  * xabot 作为 Responder 的 capabilities 声明。
  *
  * 所有 CLI 入口（feishu / wechat / chat）共享同一份声明。
+ *
+ * fetchExt intentionally absent: xabot runs same-host with the serve process
+ * and reads files via local paths; absence makes the serve side fail
+ * fetch-family commands locally without wire round-trips.
  */
 import type { Capabilities } from 'xacpp';
 

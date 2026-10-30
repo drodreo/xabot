@@ -244,7 +244,7 @@ describe('Bridge report_to_user', () => {
 
     await bridge.handleEvent('act-a', {
       activity: { id: 'act-a' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'final reply' }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'final reply' }], canceled: false } },
     });
 
     // assistantReply 丢弃：本轮报告已通过 report_to_user 投递，避免双份
@@ -258,7 +258,7 @@ describe('Bridge report_to_user', () => {
 
     await bridge.handleEvent('act-a', {
       activity: { id: 'act-a' },
-      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'final reply' }] } },
+      event: { name: 'complete', data: { assistantReply: [{ type: 'text', text: 'final reply' }], canceled: false } },
     });
 
     expect(cloudSend).toHaveBeenCalledWith(channelId('chat-a'), { type: 'text', text: 'final reply' });
@@ -292,9 +292,9 @@ describe('Bridge report_to_user', () => {
     // source-less part falls back to 'unknown' name — no executable extension, passes through
     expect(response![0]).toEqual({ type: 'file' });
     // remoteUrl-only .exe is intercepted by extension
-    expect(response![1]).toEqual({ type: 'text', text: '[已拦截可执行文件：payload.exe，该类型文件不支持转发]' });
+    expect(response![1]).toEqual({ type: 'text', text: '[已拦截可执行文件：payload.exe，该类型文件不支持转发]', partType: 'default' });
     // localUri-only .bat is intercepted by extension
-    expect(response![2]).toEqual({ type: 'text', text: '[已拦截可执行文件：virus.bat，该类型文件不支持转发]' });
+    expect(response![2]).toEqual({ type: 'text', text: '[已拦截可执行文件：virus.bat，该类型文件不支持转发]', partType: 'default' });
     // benign .pdf passes through
     expect(response![3]).toEqual(parts[3]);
   });
@@ -313,7 +313,7 @@ describe('Bridge report_to_user', () => {
     }).not.toThrow();
 
     // extension-based interception still works without mimeType
-    expect(response![0]).toEqual({ type: 'text', text: '[已拦截可执行文件：app.appimage，该类型文件不支持转发]' });
+    expect(response![0]).toEqual({ type: 'text', text: '[已拦截可执行文件：app.appimage，该类型文件不支持转发]', partType: 'default' });
     // non-string mimeType treated as empty — extension .txt passes through
     expect(response![1]).toEqual(parts[1]);
   });

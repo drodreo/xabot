@@ -14,7 +14,7 @@ import { XabotError } from '../../core/error.js';
 import { toStandardMessage, fromMessageContent, type FeishuMessageEvent } from './message.js';
 import { uploadImage, uploadFile, downloadMessageResource } from './upload.js';
 import { saveTemp } from '../../core/fs-utils.js';
-import { createLogger } from '../../core/logger.js';
+import { createLogger, sdkStderrLogger } from '../../core/logger.js';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 const log = createLogger('FeishuClient');
@@ -63,6 +63,7 @@ export class FeishuClient implements PlatformClient {
     this.wsClient = new WSClient({
       ...wsBase,
       loggerLevel: sdkLevel,
+      logger: sdkStderrLogger,
       onReady: () => { log.info('WSClient onReady: ws connected'); },
       onError: (err: unknown) => { log.error('WSClient onError: %s', err instanceof Error ? err.message : String(err)); },
       onReconnecting: () => { log.warn('WSClient onReconnecting'); },
@@ -71,10 +72,10 @@ export class FeishuClient implements PlatformClient {
 
     const httpBase = { appId: config.appId, appSecret: config.appSecret, domain: Domain.Feishu };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.httpClient = new Client({ ...httpBase, loggerLevel: sdkLevel }) as any;
+    this.httpClient = new Client({ ...httpBase, loggerLevel: sdkLevel, logger: sdkStderrLogger }) as any;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.eventDispatcher = new EventDispatcher({ loggerLevel: sdkLevel }) as any;
+    this.eventDispatcher = new EventDispatcher({ loggerLevel: sdkLevel, logger: sdkStderrLogger }) as any;
 
     // Register the message receive handler — push events into a queue
     // that messages() async generator will consume.

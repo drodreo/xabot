@@ -60,13 +60,13 @@ async function normalizePart(item: unknown): Promise<ContentPart> {
   if (typeof item !== 'object' || item === null) return item as ContentPart;
   const p = item as { type?: unknown; text?: unknown; image?: unknown; audio?: unknown; video?: unknown; file?: unknown };
   if (typeof p.type === 'string') return item as ContentPart;
-  if (typeof p.text === 'string') return { type: 'text', text: p.text };
+  if (typeof p.text === 'string') return { type: 'text', text: p.text, partType: 'default' };
   for (const kind of ['image', 'audio', 'video', 'file'] as const) {
     const v = p[kind];
     if (typeof v === 'string') {
       const source = await fileRefFromValue(v);
-      if (kind === 'file') return { type: 'file', source, name: basename(v.split('?')[0] ?? v) } as ContentPart;
-      return { type: kind, source } as ContentPart;
+      if (kind === 'file') return { type: 'file', source, name: basename(v.split('?')[0] ?? v), partType: 'default' } as ContentPart;
+      return { type: kind, source, partType: 'default' } as ContentPart;
     }
   }
   return item as ContentPart;
@@ -520,7 +520,7 @@ export class Bridge {
       const blocked = EXECUTABLE_EXTENSIONS.has(ext)
         || EXECUTABLE_MIME_PREFIXES.some((prefix) => mimeType.startsWith(prefix));
       if (!blocked) return part;
-      return { type: 'text', text: `[已拦截可执行文件：${name}，该类型文件不支持转发]` } as ContentPart;
+      return { type: 'text', text: `[已拦截可执行文件：${name}，该类型文件不支持转发]`, partType: 'default' } as ContentPart;
     });
   }
 
@@ -622,6 +622,18 @@ export class Bridge {
 
       case 'tool_result': {
         if (!chatId) return acknowledge();
+        // xacpp 1.2.x contract: isError=true marks a failed tool result
+        // (orthogonal to status); surface a failure notice instead of
+        // forwarding result parts.
+        if (data.isError === true) {
+          const toolName = typeof data.toolName === 'string' ? data.toolName : 'unknown';
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: `⚠️ 工具 ${toolName} 执行失败` });
+          } catch (err) {
+            log.debug('tool_result error notice send failed: %s', err);
+          }
+          return acknowledge();
+        }
         if (data.toolName === 'send_file') {
           for (const part of (data.parts as ContentPart[])) {
             await this._sendContentPart(chatId, target.senderId, activityId, part);
@@ -633,6 +645,30 @@ export class Bridge {
       case 'complete': {
         if (this.reportedBuckets.has(activityId)) {
           log.debug('complete assistantReply suppressed: report_to_user already delivered this round (activity %s)', activityId);
+          return acknowledge();
+        }
+        // xacpp 1.2.x contract: canceled=true means the round was aborted by
+        // the user — the final reply is an interrupted artifact and is not
+        // delivered. abortReason (present only on abnormal abort) is logged,
+        // never rendered as reply content.
+        if (data.canceled === true) {
+          if (!chatId) return acknowledge();
+          log.debug('complete canceled (activity %s, abortReason=%s)', activityId, data.abortReason);
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: '已取消本轮任务' });
+          } catch (err) {
+            log.debug('complete canceled notice send failed: %s', err);
+          }
+          return acknowledge();
+        }
+        if (typeof data.abortReason === 'string' && data.abortReason.length > 0) {
+          if (!chatId) return acknowledge();
+          log.debug('complete aborted (activity %s, abortReason=%s)', activityId, data.abortReason);
+          try {
+            await this.cloud.send(chatId, { type: 'text', text: `本轮异常中止：${data.abortReason}` });
+          } catch (err) {
+            log.debug('complete abort notice send failed: %s', err);
+          }
           return acknowledge();
         }
         for (const part of (data.assistantReply as ContentPart[])) {

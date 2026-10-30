@@ -327,7 +327,7 @@ describe('Bridge integration', () => {
     const response = await verboseBridge.handleEvent('act-1', {
       activity: { id: 'act-1' }, event: {
         name: 'complete',
-        data: { assistantReply: [{ type: 'text', text: 'final answer' }] },
+        data: { assistantReply: [{ type: 'text', text: 'final answer' }], canceled: false },
       },
     });
 
